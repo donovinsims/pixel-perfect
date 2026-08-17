@@ -1,0 +1,21 @@
+{
+  "name": "pixel-perfect-clone-toolkit",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Portable, evidence-driven public website reconstruction tooling.",
+  "bin": { "pixel-perfect-clone": "scripts/pixel-perfect-clone.mjs" },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs && node tests/fixture-test.mjs",
+    "doctor": "node scripts/pixel-perfect-clone.mjs doctor",
+    "install-global": "node scripts/pixel-perfect-clone.mjs install-global",
+    "sync-global": "node scripts/pixel-perfect-clone.mjs sync-global",
+    "fixture": "node tests/fixture-test.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "pixelmatch": "7.2.0",
+    "playwright": "1.61.1",
+    "pngjs": "7.0.0"
+  }
+}

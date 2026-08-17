@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pixel-Perfect Clone"
+  short_description: "Measure, reconstruct, compare, and refine public web pages."
+  default_prompt: "Clone this public website into the current project and verify it at desktop, tablet, and mobile sizes."
