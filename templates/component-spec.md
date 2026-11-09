@@ -1,6 +1,6 @@
 # COMPONENT: <name>
 
-- Source location and screenshot:
+- Source location, screenshot, and region crop:
 - Content and assets:
 - DOM structure:
 - Geometry:
@@ -11,4 +11,5 @@
 - Interaction model and observed states:
 - Dependencies:
 - Acceptance criteria:
+- Measured tokens used (evidence/tokens.md):
 - Status: KEEP / FIX / RECHECK

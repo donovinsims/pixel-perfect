@@ -1,64 +1,37 @@
 #!/usr/bin/env node
 import { join } from "node:path";
-import { absolute, loadBrowser, parseArgs, requireOption, readJson, settle, stablePage, VIEWPORTS, writeJson } from "../lib/core.mjs";
-
-const args = parseArgs(process.argv.slice(2));
-const source = absolute(requireOption(args, "source"));
-const cloneUrl = requireOption(args, "clone-url");
-const out = absolute(requireOption(args, "out"));
-const browser = await loadBrowser();
-const results = [];
+import { absolute, parseArgs, readJson, requireOption, resolveViewports, thresholdsFromArgs, viewportsFromManifest, writeJson } from "../lib/core.mjs";
+import { captureTarget, writeCloneBundle } from "../lib/capture.mjs";
+import { readManifest } from "../lib/evidence.mjs";
+import { compareObservations } from "../lib/sections.mjs";
 
 try {
-  for (const [name, viewport] of Object.entries(VIEWPORTS)) {
-    const sourceObs = await readJson(join(source, "evidence", `observation-${name}.json`));
-    const { context, page } = await stablePage(browser, viewport);
-    await settle(page, cloneUrl);
-    const clone = await page.evaluate(() => [...document.querySelectorAll("body > header, main > *, body > footer")]
-      .filter((element) => element.getBoundingClientRect().height > 4)
-      .map((element) => {
-        const rect = element.getBoundingClientRect();
-        const style = getComputedStyle(element);
-        return {
-          text: (element.innerText || "").trim().replace(/\s+/g, " ").slice(0, 220),
-          rect: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
-          style: {
-            fontFamily: style.fontFamily,
-            fontSize: style.fontSize,
-            lineHeight: style.lineHeight,
-            color: style.color,
-            background: style.background,
-            borderRadius: style.borderRadius,
-            boxShadow: style.boxShadow,
-            padding: style.padding,
-            gap: style.gap,
-          },
-        };
-      }));
+  const args = parseArgs(process.argv.slice(2));
+  const source = absolute(requireOption(args, "source"));
+  const cloneUrl = args["clone-url"] ? String(args["clone-url"]) : null;
+  const cloneDir = args.clone ? absolute(String(args.clone)) : cloneUrl ? join(source, "verification", "clone") : null;
+  if (!cloneDir) throw new Error("Provide --clone <dir> or --clone-url <url>.");
+  const views = args.viewports ? resolveViewports(args.viewports) : viewportsFromManifest(await readManifest(source));
 
-    const comparisons = sourceObs.sections.map((sourceSection, sourceIndex) => {
-      const exactIndex = clone.findIndex((candidate) => candidate.text && candidate.text === sourceSection.text);
-      const cloneIndex = exactIndex >= 0 ? exactIndex : sourceIndex < clone.length ? sourceIndex : -1;
-      if (cloneIndex < 0) return { source: sourceSection.selector, matchedBy: "missing", status: "fail" };
-
-      const target = clone[cloneIndex];
-      const matchedBy = exactIndex >= 0 ? "text" : "index";
-      const deltas = Object.fromEntries(Object.entries(sourceSection.rect).map(([key, value]) => [key, target.rect[key] - value]));
-      const result = { source: sourceSection.selector, cloneIndex, matchedBy, status: matchedBy === "text" ? "measured" : "review", deltas };
-      if (matchedBy === "text") {
-        result.styleMatches = Object.fromEntries(Object.entries(sourceSection.style)
-          .filter(([key]) => key in target.style)
-          .map(([key, value]) => [key, value === target.style[key]]));
-      }
-      return result;
-    });
-
-    results.push({ viewport: name, comparisons });
-    await context.close();
+  if (cloneUrl) {
+    const capture = await captureTarget({ url: cloneUrl, views });
+    await writeCloneBundle({ out: cloneDir, capture });
   }
 
-  await writeJson(out, { generatedAt: new Date().toISOString(), results });
-  console.log(`Geometry report: ${out}`);
-} finally {
-  await browser.close();
+  const results = [];
+  for (const view of views) {
+    const sourceObservation = await readJson(join(source, "evidence", `observation-${view.name}.json`));
+    const cloneObservation = await readJson(join(cloneDir, `observation-${view.name}.json`));
+    const comparison = compareObservations(sourceObservation, cloneObservation);
+    results.push({ viewport: view.name, ...comparison });
+  }
+
+  const out = absolute(requireOption(args, "out"));
+  await writeJson(out, { generatedAt: new Date().toISOString(), source, clone: cloneDir, cloneUrl, results });
+  const compared = results.reduce((total, result) => total + result.comparisons.length, 0);
+  const styleMismatches = results.reduce((total, result) => total + result.comparisons.reduce((count, comparison) => count + (comparison.styleMismatches?.length ?? 0), 0), 0);
+  console.log(`Geometry report: ${out} (${compared} regions, ${styleMismatches} style mismatches)`);
+} catch (error) {
+  console.error(error.message);
+  process.exitCode = 1;
 }

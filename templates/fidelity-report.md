@@ -6,6 +6,7 @@
 - Visual gate:
 - Geometry/style gate:
 - Interaction gate:
+- Region triage (verification/triage.md):
 - Overall conclusion:
 
 ## Largest discrepancies

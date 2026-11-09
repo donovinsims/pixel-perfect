@@ -8,7 +8,9 @@ Produce an ordered map before implementation: header, announcement, hero, conten
 
 ## Component contract
 
-Use `templates/component-spec.md` for each substantial region. Evidence must cover source location, screenshots, content, assets, DOM shape, geometry, typography, colors, background layers, borders, radii, shadows, gradients, pseudo-elements, responsive behavior, observed states, dependencies, and acceptance criteria.
+Use `templates/component-spec.md` for each substantial region. Evidence must cover source location, screenshots and region crops, content, assets, DOM shape, geometry, typography, colors, background layers, borders, radii, shadows, gradients, pseudo-elements, responsive behavior, observed states, dependencies, and acceptance criteria.
+
+Derive type, spacing, color, radius, and surface values from `evidence/tokens.md` and the region observation, not from framework defaults. Name the crop file and observation key a builder should inspect when two values disagree.
 
 Missing evidence means investigate. It is never permission to approximate.
 
