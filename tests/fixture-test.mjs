@@ -50,6 +50,11 @@ async function expectCode(file, values, expected) {
 
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 
+// A failing run must leave its evidence bundle behind so CI can upload it, and
+// CI runs keep it even when green. A passing local run still cleans up.
+const retainEvidence = /^(1|true|yes)$/i.test(process.env.CI ?? "");
+let failed = false;
+
 try {
   await rm(out, { recursive: true, force: true });
 
@@ -180,7 +185,14 @@ try {
   assert.equal(tamperReport.ok, false);
 
   console.log("fixture: capture, tokens, states, section crops, missing-clone failure, drift triage, clean pass, regression, offline triage, and tamper detection all passed");
+} catch (error) {
+  failed = true;
+  throw error;
 } finally {
   server.close();
-  await rm(out, { recursive: true, force: true });
+  if (failed || retainEvidence) {
+    console.error(`fixture: evidence retained at ${out} (${failed ? "failure" : "CI"})`);
+  } else {
+    await rm(out, { recursive: true, force: true });
+  }
 }
