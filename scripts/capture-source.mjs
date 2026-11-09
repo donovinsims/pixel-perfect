@@ -1,20 +1,23 @@
 #!/usr/bin/env node
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { VIEWPORTS, absolute, loadBrowser, parseArgs, requireOption, settle, stablePage, writeJson } from "../lib/core.mjs";
+import { captureTarget, writeSourceBundle } from "../lib/capture.mjs";
+import { absolute, parseArgs, requireOption, resolveViewports } from "../lib/core.mjs";
 
-const args = parseArgs(process.argv.slice(2)); const url = requireOption(args, "url"); const out = absolute(args.out || ".clone"); const browser = await loadBrowser(); const assets = new Map();
-const observation = (page) => page.evaluate(() => {
-  const pick = ["display","position","top","right","bottom","left","width","height","minWidth","maxWidth","minHeight","maxHeight","margin","padding","gap","rowGap","columnGap","gridTemplateColumns","gridTemplateRows","flexDirection","justifyContent","alignItems","fontFamily","fontSize","fontWeight","fontStyle","lineHeight","letterSpacing","textAlign","textTransform","color","opacity","background","backgroundColor","backgroundImage","backgroundPosition","backgroundSize","border","borderRadius","boxShadow","filter","backdropFilter","transform","transformOrigin","overflow","objectFit","objectPosition","zIndex","transition","animation"];
-  const style = (el, pseudo) => { const s = getComputedStyle(el, pseudo); return Object.fromEntries(pick.map((key) => [key, s[key]])); };
-  const describe = (el, index) => { const r = el.getBoundingClientRect(); return { index, selector: el.id ? `#${CSS.escape(el.id)}` : `${el.tagName.toLowerCase()}${el.classList.length ? `.${[...el.classList].slice(0, 3).map(CSS.escape).join(".")}` : ""}`, tag: el.tagName.toLowerCase(), classes: [...el.classList].slice(0, 12), text: (el.innerText || "").trim().replace(/\s+/g, " ").slice(0, 220), rect: { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) }, style: style(el), before: style(el, "::before"), after: style(el, "::after") }; };
-  const roots = [...document.querySelectorAll("body > header, main > *, body > footer")].filter((el) => el.getBoundingClientRect().height > 4); const sections = roots.length ? roots : [...document.querySelectorAll("main, [role=main], section")].filter((el) => el.getBoundingClientRect().height > 4);
-  const interactive = [...document.querySelectorAll("a,button,input,select,textarea,[role=button],[role=tab],summary")].filter((el) => { const r = el.getBoundingClientRect(); return r.width && r.height; }).slice(0, 150);
-  const media = [...document.querySelectorAll("img,source,video,svg,link[rel*=icon]")].map((el) => ({ tag: el.tagName.toLowerCase(), src: el.currentSrc || el.src || el.href || el.getAttribute("src") || null, alt: el.alt || null })).filter((x) => x.src);
-  const variables = {}; for (const sheet of [...document.styleSheets]) { try { for (const rule of [...sheet.cssRules]) if (rule.selectorText === ":root") for (const name of rule.style) if (name.startsWith("--")) variables[name] = rule.style.getPropertyValue(name).trim(); } catch {} }
-  return { title: document.title, route: location.pathname, page: { scrollWidth: document.documentElement.scrollWidth, scrollHeight: document.documentElement.scrollHeight, background: getComputedStyle(document.body).background }, fonts: [...document.fonts].map((f) => ({ family: f.family, status: f.status, weight: f.weight, style: f.style })), cssVariables: variables, sections: sections.map(describe), interactive: interactive.map(describe), media, headings: [...document.querySelectorAll("h1,h2,h3")].map((el) => el.textContent.trim()).filter(Boolean) };
-});
-try { await mkdir(join(out, "source", "screenshots"), { recursive: true }); await mkdir(join(out, "evidence"), { recursive: true }); const views = [];
-  for (const [name, viewport] of Object.entries(VIEWPORTS)) { const { context, page } = await stablePage(browser, viewport); page.on("response", (response) => { const type = response.headers()["content-type"] || ""; if (/image|font|css|svg|video/i.test(type)) assets.set(response.url(), { url: response.url(), status: response.status(), contentType: type }); }); await settle(page, url); await page.screenshot({ path: join(out, "source", "screenshots", `${name}.png`), fullPage: true, animations: "disabled" }); const data = await observation(page); if (name === "desktop") await writeFile(join(out, "source", "rendered.html"), await page.content()); await writeJson(join(out, "evidence", `observation-${name}.json`), data); views.push({ name, viewport, sections: data.sections.length }); await context.close(); }
-  await writeJson(join(out, "evidence", "assets.json"), [...assets.values()].sort((a, b) => a.url.localeCompare(b.url))); await writeJson(join(out, "evidence", "manifest.json"), { version: 2, sourceUrl: url, capturedAt: new Date().toISOString(), viewports: views, safety: "Public rendering facts only; no copied scripts, credentials, headers, cookies, or response bodies." }); console.log(`Captured ${views.length} responsive source views in ${out}`);
-} finally { await browser.close(); }
+try {
+  const args = parseArgs(process.argv.slice(2));
+  const url = requireOption(args, "url");
+  const out = absolute(args.out || ".clone");
+  const views = resolveViewports(args.viewports);
+  const capture = await captureTarget({ url, views, captureHtml: true });
+  const { manifest, summaries } = await writeSourceBundle({ out, capture, sourceUrl: url });
+  console.log(`Captured ${summaries.length} responsive source views in ${out}`);
+  for (const summary of summaries) {
+    console.log(`  ${summary.name} ${summary.viewport.width}x${summary.viewport.height}: ${summary.sections} regions, ${summary.cropped} cropped`);
+  }
+  console.log(`Frozen evidence: ${manifest.artifacts.length} checksummed artifacts in ${out}/evidence/manifest.json`);
+  if (manifest.warnings.length) {
+    for (const warning of manifest.warnings) console.log(`  warning: ${warning}`);
+  }
+} catch (error) {
+  console.error(error.message);
+  process.exitCode = 1;
+}

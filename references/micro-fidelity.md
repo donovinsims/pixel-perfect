@@ -6,6 +6,12 @@ This is where clones usually die: local details are tuned before the structural 
 
 Typography and container width are geometry. Measure the loaded family, actual font file, rendered size, weight, line-height, letter-spacing, text width, wrapping, max-width, gutters, and breakpoint transitions before decorative effects. Wrong type changes every downstream measurement.
 
+## Measured tokens
+
+`evidence/tokens.md` lists what the rendered page actually uses: color values with use counts, type size / line-height / weight combinations, spacing increments, radii, borders, shadows, background layers, CSS variables, loaded font faces, and declared breakpoints. It also lists layout and type transitions observed between captured widths.
+
+Tokens are evidence, not an invitation to normalize. A measured 11px radius is still 11px even when the nearest system token is 12px. Only consolidate values when multiple regions prove the same shared token, and record that decision.
+
 ## Level 2: component geometry
 
 For controls and cards measure box size, padding, gap, icon geometry, radius, border width and opacity, multiple and inset shadows, transforms, transitions, and every observed state. Preserve 11px when the source measures 11px; a nearby framework shorthand is still wrong.

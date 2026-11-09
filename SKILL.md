@@ -48,6 +48,8 @@ Every substantial region needs an evidence-backed specification: source location
 ### Keep passing regions stable
 After each verification round, classify sections as **KEEP**, **FIX**, or **RECHECK**. Do not touch KEEP regions without evidence that a shared foundation changed. This turns correction into controlled convergence instead of endless global tweaking.
 
+The classification is not memory work. `verify` writes it to `verification/triage.json` and `triage.md` with a cause, a causal priority, and an ordered correction plan. A region that matches only by position is RECHECK, never a pass. A region that was KEEP is promoted to RECHECK when the foundation signature changes, so “it passed last round” is not evidence.
+
 ### Prove behavior, not just appearance
 A verified clone must pass structure, content and assets, geometry and style, screenshots, micro-detail, meaningful observed interactions, responsive behavior, independent review when available, and regression after correction.
 
@@ -61,7 +63,7 @@ A verified clone must pass structure, content and assets, geometry and style, sc
 6. Establish fonts, root tokens, container geometry, controls, and breakpoints before section construction.
 7. Build sections from frozen specifications. Parallelize only after shared foundations are fixed.
 8. Verify at 1440, 768, and 390 widths, plus 1024 when observed behavior changes there.
-9. Correct the highest-impact measured drift for at most five focused rounds. Preserve KEEP regions and record blockers instead of guessing.
+9. Correct the highest-impact measured drift for at most five focused rounds. Read `verification/triage.md` and work the correction plan in priority order (structural, foundation, geometry, assets, visual, identity). Preserve KEEP regions and record blockers instead of guessing.
 10. Run regression and issue a fidelity verdict with evidence.
 
 ## Commands
@@ -74,7 +76,11 @@ pixel-perfect-clone capture-source --url "https://example.com" --out .clone
 pixel-perfect-clone capture-states --url "https://example.com" --out .clone
 pixel-perfect-clone run-dembrandt --url "https://example.com" --out .clone
 pixel-perfect-clone verify --source .clone --clone-url "http://localhost:3000"
+pixel-perfect-clone triage --source .clone
+pixel-perfect-clone evidence-check --source .clone
 ```
+
+`capture-source` also writes per-region crops, `evidence/tokens.json`, `evidence/tokens.md`, and a checksummed manifest. `verify` writes the fidelity report and the mechanized KEEP / FIX / RECHECK triage; `triage` recomputes that classification without recapturing. Add `--viewports desktop,tablet,mobile,1024` when behavior changes at an uncaptured width.
 
 `capture-source` uses pinned Playwright and does not require a browser MCP. An interactive browser can add supplementary evidence, but rendered geometry and computed styles remain authoritative. Dembrandt is an optional independent design-system cross-check, never the sole source of exact values.
 
@@ -128,6 +134,7 @@ Read the reference that owns the current phase:
 - `references/component-specs.md` — topology and evidence-backed component contracts.
 - `references/micro-fidelity.md` — type, geometry, compositing, controls, and responsive behavior.
 - `references/visual-verification.md` — thresholds, diagnosis, verdicts, and correction loop.
+- `references/correction-loop.md` — mechanized KEEP / FIX / RECHECK, correction plans, and regression.
 - `references/platform-adapters.md` — canonical installation and cross-agent behavior.
 
 ## Quality checklist
@@ -140,6 +147,9 @@ Read the reference that owns the current phase:
 - [ ] 1440, 768, and 390 are verified; 1024 is added when behavior changes there.
 - [ ] Missing views and uncertain geometry matches fail or require review; they never silently pass.
 - [ ] Corrections follow structural impact order and preserve KEEP regions.
+- [ ] Every region is KEEP, or its FIX/RECHECK evidence and blocker are recorded.
+- [ ] Evidence checksums still verify after the last capture (`evidence-check`).
+- [ ] `verify` exited 0 for a claimed-finished clone, not 1 or 2.
 - [ ] Screenshot numbers and human visual judgment agree.
 - [ ] The final verdict names evidence, remaining blockers, and regression status.
 

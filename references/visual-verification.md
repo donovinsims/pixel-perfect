@@ -18,9 +18,13 @@ The default visual-diff bands are:
 
 - **Pass candidate:** changed-pixel ratio ≤ 0.5%
 - **Manual review:** > 0.5% and ≤ 2.0%
-- **Fail:** > 2.0%, any missing viewport, or any dimension mismatch
+- **Fail:** > 2.0%, any missing viewport or region, or any dimension mismatch
 
-Pixel matching uses anti-aliasing tolerance. These bands direct attention; they do not create the final verdict. A wrong title wrap, missing gradient, incorrect CTA height, absent state, or visibly incorrect crop fails even when the global ratio is low.
+Override with `--pass-ratio` and `--review-ratio`. A region whose width or height changes by more than 2px is a fail; smaller reflow is review. Pixel matching uses anti-aliasing tolerance.
+
+Three gates are reported: full page, regions, and geometry. The machine gate is the worst of the three. `verify` exits `0` for pass, `1` for fail, and `2` for review; `--allow-review` accepts review in a pipeline that only wants hard failures. A tool error also exits nonzero, so a missing report can never look like a pass.
+
+These bands direct attention; they do not create the final verdict. A wrong title wrap, missing gradient, incorrect CTA height, absent state, or visibly incorrect crop fails even when the global ratio is low.
 
 ## Geometry confidence
 
@@ -49,11 +53,15 @@ The order matters because upstream structure controls many downstream pixels. Fi
 After each round:
 
 - **KEEP:** passes and has no shared-foundation dependency that changed
-- **FIX:** contains confirmed measured drift
-- **RECHECK:** previously passed but depends on a foundation changed this round
+- **FIX:** contains confirmed measured drift, a missing region, or a failing region diff
+- **RECHECK:** positional-only match, review-band difference, absent region evidence, or a previously passing region whose shared foundation changed this round
 
-Run at most five focused correction rounds. Stop earlier when all gates pass. If rounds no longer reduce meaningful error, record the concrete blocker in `.clone/lessons.md` rather than guessing.
+`verify` computes this classification into `verification/triage.json` and `triage.md`, orders the correction plan by causal priority, and names one next action. A positional match is never promoted to a measured comparison. Region crops are content-named, so renamed content is reported as a missing comparison instead of being compared by position.
+
+Run at most five focused correction rounds. Stop earlier when all gates pass and every region is KEEP. If rounds no longer reduce meaningful error, record the concrete blocker in `.clone/lessons.md` rather than guessing.
 
 ## Final verdict
 
 A clone is **Verified** only when every machine and manual gate passes. Otherwise the verdict is **Not verified**, with specific blockers and the evidence needed to resolve them.
+
+The fidelity report always states the conclusion as **Not verified** until the manual gates are closed by a reviewer. A passing machine gate is a precondition, not a verdict.
