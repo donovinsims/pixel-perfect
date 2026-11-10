@@ -114,12 +114,14 @@ async function doctor() {
 }
 
 async function main() {
-  if (command === "help" || args.help) {
-    console.log(usage);
-    return;
-  }
+  // A version request wins over the implicit help command, so `--version`
+  // alone prints the version instead of the usage text.
   if (args.version || command === "version") {
     console.log(TOOL_VERSION);
+    return;
+  }
+  if (command === "help" || args.help) {
+    console.log(usage);
     return;
   }
   if (command === "doctor") await doctor();
