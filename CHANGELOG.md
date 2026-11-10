@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.0.2 — 2026-11-10
+
+A documentation patch: the release procedure itself is now part of the released tree, so a release can be cut from the repository alone.
+
+### Added
+
+- **Release runbook.** `AGENTS.md` §12 documents the version bump, changelog shape, pull-request and `Tests` gate, annotated tag creation through the GitHub integration, release publication, tarball verification, and the rules against moving published tags or storing credentials.
+
+### Changed
+
+- `--version`, `doctor`, and new manifests report `3.0.2` (`lib/core.mjs`, `package.json`; `package-lock.json` root version synced).
+- "Definition of done" is now §13; no other section moved.
+
+### Upgrade notes
+
+- No runtime, CLI, or evidence-format change. Manifests still use version `3`, and existing 3.0.0/3.0.1 evidence directories remain valid.
+
 ## 3.0.1 — 2026-11-10
 
 A documentation patch: the released tree now carries the agent-facing guides that explain how the toolkit is wired, and the tool identifies itself as the patched build.
