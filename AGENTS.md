@@ -455,7 +455,90 @@ group cancels superseded runs. The workflow has no secrets and no deploy step.
 
 ---
 
-## 12. Definition of done
+## 12. Release procedure
+
+Cut releases from `main` after the change is merged and the `Tests` run is green. The
+release artifact is the GitHub tarball at the tag, so everything the release must contain —
+code, `CHANGELOG.md`, `AGENTS.md`, `docs/` — has to be on `main` before tagging. Content
+that lands after the tag (as `v3.0.0` did with the agent guides) is not in that artifact;
+fix it with a new patch version rather than moving the tag.
+
+### 12.1 Prepare the version
+
+1. Bump the version everywhere it is reported; all three must agree:
+   - `package.json` → `version`
+   - `lib/core.mjs` → `TOOL_VERSION`
+   - `package-lock.json` → root `version` and `packages[""].version`
+2. Add a `CHANGELOG.md` section at the top: `## X.Y.Z — YYYY-MM-DD`, a one-paragraph
+   summary, then `### Added`, `### Changed`, `### Fixed`, `### Upgrade notes` as needed.
+   State explicitly when evidence formats, exit codes, or required user actions are
+   unchanged.
+3. Verify the claims before tagging: `pixel-perfect-clone --version` prints the new
+   version, `doctor` reports the same `toolVersion`, and `npm test` passes.
+
+A documentation-only patch still bumps the version — the tag has to identify the tree it
+ships.
+
+### 12.2 Land it through a pull request
+
+1. Branch from current `main`, commit, and push with `cloud_git`
+   (`operation: "push"`, `branch: "<branch>"`). Do not run `git push` in the workspace:
+   there is no credential helper and no token in git, and there must not be. A
+   `fatal: could not read Username` error means the wrong path was used, not that a login
+   is missing.
+2. Open the PR against `main` with the GitHub integration, describing the change and the
+   checks run.
+3. Wait for the `Tests` workflow to succeed. Never merge on red, and never weaken a check
+   to get green. Merge with `GITHUB_MERGE_A_PULL_REQUEST`, `merge_method: "squash"`, and
+   the tested head SHA.
+4. Confirm the squash commit is `main`'s head and its tree matches the tested PR tree.
+
+### 12.3 Tag the merged commit
+
+Tag only after the merge, so the tag points at the squash commit — never at the PR head or
+an unmerged branch. The workspace cannot push tags, so create the annotated tag through
+the GitHub integration:
+
+1. `GITHUB_CREATE_A_TAG_OBJECT` with `type: "commit"`, `object: "<squash sha>"`,
+   `tag: "vX.Y.Z"`, and a short `X.Y.Z — <descriptor>` message. Keep the returned
+   tag-object SHA.
+2. `GITHUB_CREATE_A_REFERENCE` with `ref: "refs/tags/vX.Y.Z"` and the tag-object SHA.
+   Pointing the ref at the tag object is what makes the tag annotated.
+3. Verify with `git ls-remote origin 'refs/tags/vX.Y.Z' 'refs/tags/vX.Y.Z^{}'`: two lines,
+   the tag object and the peeled commit, which must equal the squash commit.
+4. Align the local tag so later fetches do not conflict:
+   `git tag -d vX.Y.Z && git fetch origin tag vX.Y.Z`.
+
+### 12.4 Publish and verify the release
+
+1. `GITHUB_CREATE_A_RELEASE` with `tag_name`, `target_commitish` set to the squash SHA,
+   `draft: false`, `prerelease: false`, `make_latest: "true"`, and the matching changelog
+   section as `body` (keep the `**Full changelog:**` link).
+2. Verify the published artifact, not just the API response:
+
+```bash
+curl -sSL -o /tmp/v.tar.gz https://github.com/donovinsims/pixel-perfect/archive/refs/tags/vX.Y.Z.tar.gz
+tar -tzf /tmp/v.tar.gz | grep -E '/(AGENTS.md|docs/architecture.md)$'
+tar -xzOf /tmp/v.tar.gz --wildcards '*/package.json' | grep '"version"'
+tar -xzOf /tmp/v.tar.gz --wildcards '*/lib/core.mjs' | grep TOOL_VERSION
+tar -xzOf /tmp/v.tar.gz --wildcards '*/CHANGELOG.md' | head -3
+```
+
+The tarball must contain every file the release notes promise and report the tagged
+version.
+
+### 12.5 Rules
+
+- Never move, delete, or force-update a published tag. Fix a bad release with a new patch
+  version.
+- Never put GitHub tokens, `gh` auth state, or credentials in the repository, in chat, or
+  in a command argument. `gh` is installed but intentionally unauthenticated; `cloud_git`
+  and the GitHub integration already act with the owner's authorization.
+- `CHANGELOG.md` on `main` is the source of truth; the release body reproduces its section
+  for that version.
+- The `Tests` gate applies to documentation-only PRs too.
+
+## 13. Definition of done
 
 - [ ] `npm test` passes locally (unit + fixture).
 - [ ] `npm run doctor` reports Playwright available.
