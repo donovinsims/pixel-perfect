@@ -4,6 +4,10 @@ A measurement-driven skill and local toolkit for reconstructing authorized publi
 
 This repository contains both the agent methodology (`SKILL.md`) and the executable Playwright-based toolkit used to capture and verify evidence.
 
+## Working on this repository
+
+If you are an AI coding agent, start with [AGENTS.md](AGENTS.md): it covers the module map, the on-disk data contracts, the invariants that must not regress, testing, and common change recipes. Module-level detail lives in [docs/architecture.md](docs/architecture.md).
+
 ## What is new in 3.0
 
 - **Region-level evidence.** Every measured section is cropped out of the stored full-page screenshot, so verification compares the hero, the pricing block, and the footer separately instead of averaging them into one page score.
