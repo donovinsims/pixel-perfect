@@ -1,5 +1,28 @@
 # Changelog
 
+## 3.0.1 — 2026-11-10
+
+A documentation patch: the released tree now carries the agent-facing guides that explain how the toolkit is wired, and the tool identifies itself as the patched build.
+
+### Added
+
+- **`AGENTS.md`.** Operating manual for AI agents and new engineers: non-negotiable rules, repository map, evidence and manifest contracts, gate and triage algorithms, testing and CI behavior, change recipes, a debugging table, and a definition of done.
+- **`docs/architecture.md`.** Module-level reference: command dispatch and exit codes, capture sequence, observation contract, comparison and triage internals, visual diff, evidence hashing, adapters, coupling map, and known constraints.
+- **README pointer.** A "Working on this repository" section links both guides.
+
+### Changed
+
+- `--version`, `doctor`, and new manifests report `3.0.1` (`lib/core.mjs`, `package.json`).
+- `package-lock.json` root version now matches the package; it had remained at `2.0.0` since that release.
+
+### Fixed
+
+- `pixel-perfect-clone --version` prints the version instead of the usage text; the implicit `help` command was being handled first.
+
+### Upgrade notes
+
+- No runtime, CLI, or evidence-format change. Manifests still use version `3`, and existing 3.0.0 evidence directories remain valid. Recapture only if you want new manifests stamped `3.0.1`.
+
 ## 3.0.0 — 2026-11-09
 
 A verification release: the toolkit now measures regions, classifies correction work, and makes the frozen baseline tamper-evident.
