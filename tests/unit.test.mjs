@@ -39,6 +39,7 @@ import {
   summarizeGate,
 } from "../lib/verdict.mjs";
 import { diffPng } from "../lib/visual.mjs";
+import { verifyClone } from "../lib/verify.mjs";
 import { snapshotInteractiveState, trackAssets } from "../lib/observe.mjs";
 
 const BASE_STYLE = {
@@ -579,6 +580,57 @@ test("manifest metadata files are skipped, never reported invalid, and symlinked
     assert.equal(linkedArtifact.ok, false);
     assert.ok(linkedArtifact.invalid.includes("source/screenshots/linked.png"));
     await assert.rejects(() => buildManifest({ out: root, sourceUrl: "https://example.com", viewports: [] }), /Unsafe evidence bundle entries/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a verification round scores only its own capture, not stale clone evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pixel-perfect-round-"));
+  try {
+    const png = pngBuffer(20, 20, [10, 20, 30]);
+    const rect = { x: 0, y: 0, width: 10, height: 10 };
+    const observed = observation([section({ text: "Hero", rect, documentRect: rect })], {
+      page: { viewport: { width: 1440, height: 1000 }, scrollWidth: 20, scrollHeight: 20, backgroundColor: "rgb(248, 250, 252)" },
+    });
+    const crop = cropPng(png, rect);
+    await mkdir(join(root, "source", "screenshots"), { recursive: true });
+    await mkdir(join(root, "source", "sections", "desktop"), { recursive: true });
+    await mkdir(join(root, "evidence"), { recursive: true });
+    await writeFile(join(root, "source", "screenshots", "desktop.png"), png);
+    await writeFile(join(root, "source", "sections", "desktop", "hero.png"), crop);
+    await writeFile(join(root, "evidence", "observation-desktop.json"), JSON.stringify(observed));
+    await writeFile(join(root, "evidence", "sections-desktop.json"), JSON.stringify({
+      viewport: "desktop",
+      viewportSize: { width: 1440, height: 1000 },
+      regionExpectation: "required",
+      sections: [{ index: 0, slug: "hero", selector: "section.hero", role: "main", text: "Hero", rect, documentRect: rect, bytes: crop.byteLength, captureStatus: "captured" }],
+    }));
+    const manifest = await buildManifest({
+      out: root,
+      sourceUrl: "https://example.com",
+      viewports: [{ name: "desktop", viewport: { width: 1440, height: 1000 }, sections: 1, regionExpectation: "required", captureStatus: "captured" }],
+    });
+    await writeManifest(root, manifest);
+
+    // Evidence left behind by an earlier round or a compare-geometry run.
+    const staleCrop = join(root, "verification", "clone", "sections", "desktop", "invented-region.png");
+    await mkdir(join(root, "verification", "clone", "sections", "desktop"), { recursive: true });
+    await writeFile(staleCrop, "stale-crop");
+    const staleObservation = join(root, "verification", "clone", "observation-desktop.json");
+    await writeFile(staleObservation, JSON.stringify({ sections: [] }));
+
+    const capture = async () => ({
+      pages: [{ name: "desktop", viewport: { width: 1440, height: 1000 }, screenshot: png, observation: observed, html: null }],
+      assets: [],
+      warnings: [],
+    });
+    const { report } = await verifyClone({ sourceDir: root, cloneUrl: "http://localhost:3000", capture });
+    assert.equal(report.sectionGate, "pass");
+    assert.equal(report.geometryGate, "pass");
+    assert.equal(report.machineGate, "pass");
+    assert.ok(await readFile(join(root, "verification", "clone", "sections", "desktop", "hero.png")));
+    await assert.rejects(() => readFile(staleCrop), /ENOENT/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
