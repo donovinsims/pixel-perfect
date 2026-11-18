@@ -2,7 +2,20 @@
 
 A measurement-driven skill and local toolkit for reconstructing authorized public websites with high visual fidelity—and proving the result with responsive browser evidence, geometry comparison, region-level screenshot diffs, extracted design tokens, interaction-state capture, and a mechanized correction loop.
 
-This repository contains both the agent methodology (`SKILL.md`) and the executable Playwright-based toolkit used to capture and verify evidence.
+This repository contains both the agent methodology (`SKILL.md`) and the executable Playwright-based toolkit used to capture and verify evidence. The current v4 implementation audit and validation status is tracked in [the requirements matrix](docs/v4-implementation-status.md); v4 additions remain unverified until the required local and browser test suites pass.
+
+## v4.0 development additions (unreleased)
+
+This checkout contains the v4.0 capability work, while package/tool version remains 3.0.2 until an authorized release:
+
+- **Executable discovery.** `discover` inventories same-origin pages through navigation links, `robots.txt`, and sitemaps. It defaults to 50 routes, depth 4, and concurrency 2; query strings are collapsed, robots exclusions are reported, and additional origins require explicit `--scope`.
+- **Route-aware capture.** `capture-source --routes` captures every discovered route across selected viewports. Route IDs and paths are retained through verification; blocked routes stay visible as failed coverage instead of disappearing.
+- **Repeatable capture profiles and stability evidence.** `--profile` configures Chromium context and settling options. Captures compare repeated rendered pixels and record instability warnings; profile keys are allowlisted so arbitrary profile data is never copied into the manifest.
+- **Reusable design-system export.** `export-design` writes JSON, Markdown, and CSS tokens from measured styles, typography, layout, component signatures, and responsive observations. Semantic roles are explicitly marked as inferred.
+- **Explicit final verdict.** `finalize` combines the latest machine report, frozen-evidence integrity, and human review from `templates/manual-review.json`; pending gates cannot be mistaken for a verified clone.
+- **Safer refresh and evidence checks.** Source recaptures and interaction-state refreshes archive the prior bundle under `baseline-history/`. Checks now include the manifest checksum, required and unexpected files, unsafe paths, and symlinks.
+
+The manifest remains version 3 with additive fields; existing v3 bundles without a manifest checksum remain readable. No dependency or tool-version bump is made by this unreleased change.
 
 ## Working on this repository
 
@@ -77,6 +90,16 @@ No API key is required. Dembrandt is optional and uses its own existing local co
 
 ## Quick start
 
+Discover authorized routes before capture (optional; defaults are 50 routes, depth 4, concurrency 2):
+
+```bash
+node scripts/pixel-perfect-clone.mjs discover \
+  --url "https://example.com" \
+  --out .clone
+```
+
+Discovery stays on the starting origin unless additional origins are explicitly authorized with `--scope https://docs.example.com`. It reads navigation links, `robots.txt`, and sitemaps, strips query strings/fragments, and reports blocked or failed routes in `discovery/route-coverage.json`.
+
 Capture a public source page, including per-region crops and extracted tokens:
 
 ```bash
@@ -84,6 +107,16 @@ node scripts/pixel-perfect-clone.mjs capture-source \
   --url "https://example.com" \
   --out .clone
 ```
+
+To capture every discovered route, pass the generated inventory:
+
+```bash
+node scripts/pixel-perfect-clone.mjs capture-source \
+  --routes .clone/discovery/routes.json \
+  --out .clone
+```
+
+A JSON capture profile may set only documented Chromium fields such as `colorScheme`, `locale`, `waitForImages`, bounded resource waits (`resourceTimeoutMs`, default 5000ms), and stability sampling options. Source, asset, and URL-bearing CSS evidence has credentials, query strings, and fragments removed. The saved `rendered.html` is a sanitized DOM snapshot without scripts, event handlers, form values, sensitive metadata/attributes, or unsafe/query-bearing URLs. `--no-regions-expected` is an explicit acknowledgement for pages that genuinely have no measurable regions; it does not waive regions that were detected.
 
 Add an observed breakpoint when layout or type changes there:
 
@@ -117,11 +150,28 @@ Generated evidence and reports live under `.clone/`. A verification run writes:
 - `verification/geometry-report.json` — measured deltas and style mismatches;
 - `verification/sections/sections-report.json` — region-level pixel diffs.
 
+Export reusable design-system documentation from captured observations:
+
+```bash
+node scripts/pixel-perfect-clone.mjs export-design --source .clone
+```
+
+This writes `design-system/design-system.json`, `DESIGN-SYSTEM.md`, and `tokens.css`. Measurements are evidence; inferred semantic roles and component groupings need human confirmation.
+
 Re-classify an existing round without recapturing:
 
 ```bash
 node scripts/pixel-perfect-clone.mjs triage --source .clone
 ```
+
+After machine verification, edit a copy of `templates/manual-review.json` and finalize explicitly:
+
+```bash
+cp templates/manual-review.json .clone/verification/manual-review.json
+node scripts/pixel-perfect-clone.mjs finalize --source .clone
+```
+
+`finalize` rechecks frozen evidence on every run. It exits `0` only for fully verified or ready-with-limitations, `2` while review is pending, and `1` when failed or blocked. `not_applicable` gates need a gate reason and a documented limitation.
 
 ## Commands
 
@@ -129,12 +179,15 @@ node scripts/pixel-perfect-clone.mjs triage --source .clone
 pixel-perfect-clone doctor
 pixel-perfect-clone install-global [--force]
 pixel-perfect-clone sync-global [--force]
-pixel-perfect-clone capture-source --url URL [--out .clone] [--viewports desktop,tablet,mobile]
+pixel-perfect-clone discover --url URL [--out .clone] [--scope ORIGIN,...] [--max-routes 50] [--max-depth 4] [--concurrency 2]
+pixel-perfect-clone capture-source --url URL [--routes discovery/routes.json] [--out .clone] [--viewports ...] [--profile FILE] [--no-regions-expected]
 pixel-perfect-clone capture-states --url URL [--out .clone] [--viewports desktop] [--max 80]
 pixel-perfect-clone capture-clone --url URL --out DIR [--viewports ...]
 pixel-perfect-clone screenshot-target --url URL --out DIR        # alias of capture-clone
 pixel-perfect-clone run-dembrandt --url URL [--out .clone]
 pixel-perfect-clone extract-tokens --source .clone [--out DIR]
+pixel-perfect-clone export-design --source .clone [--out DIR]
+pixel-perfect-clone finalize --source .clone [--review FILE]
 pixel-perfect-clone evidence-check --source .clone
 pixel-perfect-clone visual-diff --source DIR --clone DIR --out DIR [--source-sections DIR --clone-sections DIR]
 pixel-perfect-clone compare-geometry --source .clone (--clone DIR | --clone-url URL) --out FILE
@@ -158,9 +211,9 @@ You can use the package binary after installation or call `node scripts/pixel-pe
 | --- | --- |
 | Pass candidate | Changed-pixel ratio ≤ 0.5%, no missing viewport or region, no dimension mismatch |
 | Manual review | > 0.5% and ≤ 2.0% |
-| Fail | > 2.0%, any missing viewport or region, or any dimension mismatch |
+| Fail | > 2.0%, missing required evidence/region, any full-page dimension mismatch, or section size drift > 2px |
 
-Bounds are configurable with `--pass-ratio` and `--review-ratio`. A region whose width or height drifts by more than 2px fails; smaller reflow is review.
+Bounds are configurable with `--pass-ratio` and `--review-ratio`. A region whose width or height drifts by more than 2px fails; smaller reflow is review. Reports must cover every manifest capture exactly once; missing, duplicate, extra, or unsupported evidence fails closed. Zero-region pages pass the section/geometry checks only when `--no-regions-expected` was explicitly recorded in the source manifest.
 
 Exit codes: `0` pass, `1` fail, `2` review (attention required, not a pass). Use `--allow-review` to accept review in a pipeline that only wants hard failures. These bands focus inspection; they do not replace visual judgment or the required manual gates.
 
@@ -207,20 +260,25 @@ Work the correction plan in priority order: structural, foundation, geometry, as
 ```text
 .clone/
 ├── source/
-│   ├── rendered.html
+│   ├── rendered.html                # route captures use routes/<route-id>/rendered.html
+│   ├── routes/<route-id>/rendered.html
 │   ├── screenshots/
 │   │   └── desktop.png, tablet.png, mobile.png, w1024.png
 │   ├── sections/
 │   │   └── <viewport>/<region>.png
 │   └── dembrandt.json          # optional
 ├── evidence/
-│   ├── manifest.json           # v3: version, viewports, warnings, checksums
+│   ├── manifest.json           # v3: viewports, route metadata, profile, required files, checksums
+│   ├── manifest.sha256         # checksum of manifest.json
 │   ├── assets.json
 │   ├── observation-<viewport>.json
 │   ├── sections-<viewport>.json
 │   ├── tokens.json
 │   ├── tokens.md
 │   └── states-desktop.json     # after capture-states
+├── baseline-history/<timestamp>/ # archived source/evidence bundle before refresh
+├── discovery/                  # route inventory, site map, and route coverage
+├── design-system/              # optional JSON, Markdown, and CSS export
 ├── verification/
 │   ├── clone/
 │   │   ├── <viewport>.png
@@ -272,7 +330,9 @@ The default suite includes unit tests and a real browser fixture that exercises:
 - deliberate visual drift detection and the resulting correction plan;
 - clean machine-gate completion with zero FIX/RECHECK regions;
 - regression after correction without spurious reclassification;
-- offline re-triage from an existing verification round.
+- offline re-triage from an existing verification round;
+- robots/sitemap/navigation discovery, route limits and route-aware capture;
+- capture-profile validation, sanitized HTML snapshots, route-aware design export, and integrity checks including manifest-file symlinks.
 
 ```bash
 npm test
@@ -294,12 +354,15 @@ A clone is **Verified** only when all machine and manual gates pass:
 7. independent review when available;
 8. regression after corrections.
 
-If any required gate remains unresolved, the conclusion is **Not verified** and the report must name the blocker. A low changed-pixel ratio never overrides a visible error.
+If any required gate remains unresolved, the conclusion is **Not verified** and the report must name the blocker. A low changed-pixel ratio never overrides a visible error. The machine fidelity report never claims final verification: `finalize` returns `fully_verified`, `ready_with_limitations`, `manual_review_required`, `failed`, or `blocked` after rechecking frozen evidence and explicit human-gate input.
 
 ## Limitations
 
+- Discovery is passive and unauthenticated: it does not click links or access private pages. It follows same-origin links plus sitemap entries, observes robots exclusions, and strips query strings, so query-dependent route variants are intentionally collapsed.
+- Discovery is bounded by route, depth, and concurrency limits; any cap or depth truncation is reported and means route coverage is incomplete. It inventories pages, not application behavior.
 - State capture is desktop-first; pass `--viewports` to sweep another width when state styling changes there.
 - Breakpoints are reported as declared media queries plus transitions observed between captured widths. A width that was never captured is still unmeasured.
+- Repeated pixel samples detect visible instability but cannot prove that all timers, live data, video, or backend state are deterministic. Review every instability warning; recapture only after the source is stable.
 - Region identity is content-derived. A clone that renames every heading can only be compared positionally, which triage marks RECHECK and never a pass.
 - Browser anti-aliasing, dynamic ads, rotating content, and live data can create noise. Stabilize or explicitly record these sources of variance.
 - Checksums prove the evidence bundle is unchanged; they do not prove lawful use of any asset.

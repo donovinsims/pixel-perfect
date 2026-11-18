@@ -8,6 +8,9 @@
   "scripts": {
     "test": "node --test tests/*.test.mjs && node tests/fixture-test.mjs",
     "doctor": "node scripts/pixel-perfect-clone.mjs doctor",
+    "discover": "node scripts/pixel-perfect-clone.mjs discover",
+    "export-design": "node scripts/pixel-perfect-clone.mjs export-design",
+    "finalize": "node scripts/pixel-perfect-clone.mjs finalize",
     "install-global": "node scripts/pixel-perfect-clone.mjs install-global",
     "sync-global": "node scripts/pixel-perfect-clone.mjs sync-global",
     "fixture": "node tests/fixture-test.mjs"

@@ -19,6 +19,11 @@ try {
     ok: integrity.ok,
     missing: integrity.missing,
     mismatched: integrity.mismatched,
+    unexpected: integrity.unexpected,
+    invalid: integrity.invalid,
+    manifestIntegrity: integrity.manifestIntegrity,
+    interactionStates: manifest.interactionStates ?? [],
+    captureProfile: manifest.captureProfile ?? null,
     warnings: manifest.warnings ?? [],
     message: integrity.message,
   }, null, 2));

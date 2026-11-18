@@ -20,12 +20,15 @@ const usage = [
   "  doctor                      Report runtime, browser, and adapter state",
   "  install-global [--force]    Link the skill into detected agent directories",
   "  sync-global [--force]       Repair missing or stale skill links",
-  "  capture-source --url URL [--out .clone] [--viewports desktop,tablet,mobile]",
+  "  discover --url URL [--out .clone] [--max-routes 50] [--max-depth 4] [--concurrency 2] [--scope ORIGIN,...]",
+  "  capture-source --url URL [--routes discovery/routes.json] [--out .clone] [--viewports ...] [--profile FILE]",
   "  capture-states --url URL [--out .clone] [--viewports desktop] [--max 80]",
   "  capture-clone --url URL --out DIR [--viewports ...]",
   "  run-dembrandt --url URL [--out .clone]",
   "  screenshot-target --url URL --out DIR   (alias of capture-clone)",
   "  extract-tokens --source .clone [--out DIR]",
+  "  export-design --source .clone [--out DIR]",
+  "  finalize --source .clone [--review verification/manual-review.json]",
   "  evidence-check --source .clone",
   "  visual-diff --source DIR --clone DIR --out DIR [--source-sections DIR --clone-sections DIR]",
   "  compare-geometry --source .clone (--clone DIR | --clone-url URL) --out FILE",
@@ -129,6 +132,7 @@ async function main() {
   else if (command === "verify") await import("./verify-clone.mjs");
   else if (command === "extract-tokens") await import("./extract-tokens.mjs");
   else if (command === "evidence-check") await import("./evidence-check.mjs");
+  else if (["discover", "export-design", "finalize"].includes(command)) await import(`./${command}.mjs`);
   else if (command === "triage") {
     const source = String(args.source || ".clone");
     const { triage } = await triageEvidence({ sourceDir: resolve(process.cwd(), source) });

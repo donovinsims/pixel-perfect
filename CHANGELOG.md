@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased — v4.0 development
+
+The toolkit now has bounded public-route discovery, route-aware capture, reusable design-system exports, explicit human finalization, and stronger evidence-integrity and rendering-stability checks. These changes remain uncommitted and unreleased; the package/tool version is unchanged.
+
+### Added
+
+- `discover` inventories same-origin navigation, robots, and sitemap routes with explicit scopes, route/depth/concurrency bounds, canonical deduplication, and coverage reports.
+- `capture-source --routes` captures route inventories across viewports; route/viewport metadata, bounded font/image waits, and repeated pixel samples are recorded in evidence. Saved rendered HTML is sanitized and excludes scripts and form values.
+- `export-design` produces reusable design-system JSON, Markdown, and CSS from measured observations.
+- `finalize` combines frozen-evidence integrity, machine results, and explicit manual-review gates into a final verdict.
+- Baseline refreshes archive the prior source/evidence bundle; evidence checks report missing, changed, unexpected, unsafe, symlinked, and manifest-checksum failures.
+
+### Fixed
+
+- Route/depth truncation is reported accurately; invalid capture profiles and route inventories are rejected before a prior baseline is archived or replaced.
+- Capture-profile fields are allowlisted; source/asset URLs and URL-bearing computed styles omit credentials, query strings, and fragments. Rendered HTML snapshots strip scripts, form values, event handlers, and unsafe URLs.
+- Repeated component signatures receive collision-resistant export identifiers; responsive token transitions compare matched regions within each route instead of treating pages as viewport widths. Empty and unavailable verification evidence fails closed.
+
+### Upgrade notes
+
+- No dependency, package version, tool version, or manifest-version bump is made here. Manifest v3 additions are backward-readable; legacy v3 bundles without `manifest.sha256` retain compatibility, while new bundles verify both the manifest checksum and bundle contents.
+
+
 ## 3.0.2 — 2026-11-10
 
 A documentation patch: the release procedure itself is now part of the released tree, so a release can be cut from the repository alone.

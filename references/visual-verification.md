@@ -28,8 +28,9 @@ These bands direct attention; they do not create the final verdict. A wrong titl
 
 ## Geometry confidence
 
-- Exact text match: eligible for measured comparison.
-- Positional fallback: review only; never a pass.
+- Unique exact id, normalized text, or heading match: eligible for measured comparison.
+- Duplicate or competing identity candidates: ambiguous, with candidate indexes; review only.
+- Positional fallback: review only; never a pass. Missing targets fail.
 - Missing target: fail.
 - High-value control and alignment deltas: investigate above ±1px.
 - Large section bounds: investigate above ±2px unless browser rounding is demonstrated.
@@ -54,14 +55,15 @@ After each round:
 
 - **KEEP:** passes and has no shared-foundation dependency that changed
 - **FIX:** contains confirmed measured drift, a missing region, or a failing region diff
-- **RECHECK:** positional-only match, review-band difference, absent region evidence, or a previously passing region whose shared foundation changed this round
+- **RECHECK:** positional-only/ambiguous match, review-band difference, or a previously passing region whose shared foundation changed this round
+- **FIX:** missing section screenshot evidence (assets/evidence)
 
-`verify` computes this classification into `verification/triage.json` and `triage.md`, orders the correction plan by causal priority, and names one next action. A positional match is never promoted to a measured comparison. Region crops are content-named, so renamed content is reported as a missing comparison instead of being compared by position.
+`verify` computes this classification into `verification/triage.json` and `triage.md`, orders the correction plan by causal priority, and names one next action. Positional and ambiguous matches are never promoted to measured comparisons. Region crop names are based on content and structure; when identity cannot be established, a positional geometry fallback is marked for review, and missing crops fail the region gate.
 
 Run at most five focused correction rounds. Stop earlier when all gates pass and every region is KEEP. If rounds no longer reduce meaningful error, record the concrete blocker in `.clone/lessons.md` rather than guessing.
 
 ## Final verdict
 
-A clone is **Verified** only when every machine and manual gate passes. Otherwise the verdict is **Not verified**, with specific blockers and the evidence needed to resolve them.
+A clone is **fully verified** only when every machine and manual gate passes. Otherwise it is not fully verified, even if a separate `ready_with_limitations` status is accepted for a documented, bounded exception; the verdict must name blockers and evidence needed to resolve them.
 
-The fidelity report always states the conclusion as **Not verified** until the manual gates are closed by a reviewer. A passing machine gate is a precondition, not a verdict.
+The machine fidelity report is not a final verdict. Run `finalize --source .clone` after human review; it rechecks the frozen bundle and reads `verification/manual-review.json`. The seven required gates default to pending. A `not_applicable` gate needs a reason plus a documented limitation. Final statuses distinguish `fully_verified`, `ready_with_limitations`, `manual_review_required`, `failed`, and `blocked`; only the first two exit 0.

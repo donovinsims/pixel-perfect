@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { join } from "node:path";
-import { absolute, parseArgs, readJson, requireOption, resolveViewports, thresholdsFromArgs, viewportsFromManifest, writeJson } from "../lib/core.mjs";
+import { absolute, captureProfileFromManifest, parseArgs, readJson, requireOption, resolveViewports, routeAwareViewports, thresholdsFromArgs, writeJson } from "../lib/core.mjs";
 import { captureTarget, writeCloneBundle } from "../lib/capture.mjs";
 import { readManifest } from "../lib/evidence.mjs";
 import { compareObservations } from "../lib/sections.mjs";
@@ -11,10 +11,18 @@ try {
   const cloneUrl = args["clone-url"] ? String(args["clone-url"]) : null;
   const cloneDir = args.clone ? absolute(String(args.clone)) : cloneUrl ? join(source, "verification", "clone") : null;
   if (!cloneDir) throw new Error("Provide --clone <dir> or --clone-url <url>.");
-  const views = args.viewports ? resolveViewports(args.viewports) : viewportsFromManifest(await readManifest(source));
+  const manifest = await readManifest(source);
+  const views = routeAwareViewports(manifest, args.viewports ? resolveViewports(args.viewports) : null);
+  const cloneViews = cloneUrl ? views.map((view) => {
+    if (!view.routePath) return view;
+    if (!view.routePath.startsWith("/") || view.routePath.startsWith("//")) throw new Error(`Invalid route path in source manifest: ${view.routePath}`);
+    const routeUrl = new URL(view.routePath, cloneUrl);
+    if (routeUrl.origin !== new URL(cloneUrl).origin) throw new Error("Route path escaped the configured clone origin.");
+    return { ...view, url: routeUrl.href };
+  }) : views;
 
   if (cloneUrl) {
-    const capture = await captureTarget({ url: cloneUrl, views });
+    const capture = await captureTarget({ url: cloneUrl, views: cloneViews, profile: captureProfileFromManifest(manifest.captureProfile) });
     await writeCloneBundle({ out: cloneDir, capture });
   }
 

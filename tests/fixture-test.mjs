@@ -15,10 +15,40 @@ const fixture = await readFile(join(root, "tests", "fixture.html"), "utf8");
 
 const server = createServer((request, response) => {
   const requestUrl = new URL(request.url, "http://localhost");
+  if (requestUrl.pathname === "/robots.txt") {
+    response.setHeader("Content-Type", "text/plain; charset=utf-8");
+    response.end(["User-agent: *", "Disallow: /private", `Sitemap: http://${request.headers.host}/sitemap.xml`, ""].join("\n"));
+    return;
+  }
+  if (requestUrl.pathname === "/sitemap.xml") {
+    response.setHeader("Content-Type", "application/xml; charset=utf-8");
+    response.end(`<?xml version="1.0"?><urlset><url><loc>http://${request.headers.host}/sitemap-only</loc></url><url><loc>http://${request.headers.host}/about/?q=1</loc></url><url><loc>http://${request.headers.host}/about</loc></url></urlset>`);
+    return;
+  }
+  if (requestUrl.pathname === "/missing") {
+    response.statusCode = 404;
+    response.setHeader("Content-Type", "text/plain; charset=utf-8");
+    response.end("not found");
+    return;
+  }
+  if (requestUrl.pathname === "/state-pixel") {
+    response.setHeader("Content-Type", "image/svg+xml");
+    response.end('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" fill="red"/></svg>');
+    return;
+  }
   let body = fixture;
   if (requestUrl.searchParams.has("drift")) body = body.replace("border-radius:14px", "border-radius:2px").replace("height:48px", "height:36px");
   if (requestUrl.searchParams.has("textdrift")) {
     body = body.replace("Measured CTA card", "Changed measured CTA card").replace('id="one"', 'id="uno"');
+  }
+  if (requestUrl.pathname === "/") {
+    body = body.replace("</body>", '<nav id="discovery-links"><a href="/about/">About</a><a href="/missing">Missing</a><a href="/private">Private</a><a href="https://example.invalid/out">External</a></nav></body>');
+  }
+  if (requestUrl.pathname === "/snapshot") {
+    body = body.replace("</body>", '<style>:root{--snapshot-private:url("https://user:pass@example.invalid/asset?access_token=style-secret#fragment")}</style><script type="application/json">{"marker":"snapshot-script-secret"}</script><form style="display:none"><input type="password" value="snapshot-form-secret"></form><a style="display:none" href="/private?access_token=snapshot-url-secret#private">private link</a></body>');
+  }
+  if (requestUrl.pathname === "/state-css") {
+    body = body.replace(".cta{position:relative;", `.cta{background-image:url("http://user:pass@127.0.0.1:${server.address().port}/state-pixel?state_token=state-secret#fragment");position:relative;`);
   }
   response.setHeader("Content-Type", "text/html; charset=utf-8");
   response.end(body);
@@ -69,6 +99,14 @@ try {
   assert.ok(manifest.artifacts.some((artifact) => artifact.path === "evidence/manifest.json") === false);
   assert.ok(manifest.artifacts.some((artifact) => /^source\/sections\/desktop\/.+\.png$/.test(artifact.path)));
   assert.ok(manifest.artifacts.every((artifact) => /^[0-9a-f]{64}$/.test(artifact.sha256)));
+  const snapshotOut = join(out, "sanitized-snapshot");
+  await expectCode("capture-source.mjs", ["--url", `${url}/snapshot`, "--out", snapshotOut, "--viewports", "desktop"], 0);
+  const snapshotHtml = await readFile(join(snapshotOut, "source", "rendered.html"), "utf8");
+  assert.doesNotMatch(snapshotHtml, /<script\b/i);
+  assert.doesNotMatch(snapshotHtml, /snapshot-script-secret|snapshot-form-secret|snapshot-url-secret|style-secret|user:pass|access_token|unsafe=1/);
+  assert.match(snapshotHtml, /href="http:\/\/127\.0\.0\.1:[0-9]+\/private"/);
+  const snapshotObservation = await readJson(join(snapshotOut, "evidence", "observation-desktop.json"));
+  assert.equal(snapshotObservation.cssVariables["--snapshot-private"], 'url("https://example.invalid/asset")');
 
   const desktopSections = await readJson(join(out, "evidence", "sections-desktop.json"));
   assert.equal(desktopSections.sections.length, 4);
@@ -80,7 +118,81 @@ try {
   ]);
   for (const section of desktopSections.sections) assert.ok(section.bytes > 0, `${section.slug} was not cropped`);
 
-  // 2. Frozen evidence is checksum-clean and the token report is generated.
+  // 2. Discover routes conservatively from sitemap and same-origin navigation.
+  const discoveryOut = join(out, "discovery-run");
+  await expectCode("pixel-perfect-clone.mjs", ["discover", "--url", url, "--out", discoveryOut, "--max-routes", "20", "--max-depth", "2"], 0);
+  const routeInventoryPath = join(discoveryOut, "discovery", "routes.json");
+  const routeInventory = await readJson(routeInventoryPath);
+  const coverage = await readJson(join(discoveryOut, "discovery", "route-coverage.json"));
+  assert.ok(routeInventory.routes.some((route) => route.routePath === "/about"));
+  assert.ok(routeInventory.routes.some((route) => route.routePath === "/sitemap-only"));
+  assert.equal(routeInventory.routes.some((route) => route.url.includes("example.invalid")), false);
+  assert.equal(routeInventory.routes.filter((route) => route.routePath === "/about").length, 1);
+  assert.ok(routeInventory.routes.some((route) => route.discoveryStatus === "robots_disallowed" && route.routePath === "/private"));
+  assert.ok(coverage.missingPages.some((page) => page.url.endsWith("/missing") && page.status === 404));
+  assert.match(await readFile(join(discoveryOut, "discovery", "SITE-MAP.md"), "utf8"), /Website route map/);
+  const limitedOut = join(out, "limited-discovery");
+  await expectCode("pixel-perfect-clone.mjs", ["discover", "--url", url, "--out", limitedOut, "--max-routes", "2", "--max-depth", "1"], 0);
+  const limitedCoverage = await readJson(join(limitedOut, "discovery", "route-coverage.json"));
+  assert.equal(limitedCoverage.discovered, 2);
+  assert.equal(limitedCoverage.routeLimitReached, true);
+  assert.equal(limitedCoverage.truncated, true);
+
+  // Route capture respects robots exclusions and writes route-qualified evidence.
+  const routeCaptureOut = join(out, "route-source");
+  const routeCapture = await run("capture-source.mjs", ["--url", url, "--routes", routeInventoryPath, "--out", routeCaptureOut, "--viewports", "desktop"]);
+  assert.equal(routeCapture.code, 1, `${routeCapture.stdout}\\n${routeCapture.stderr}`);
+  const routeManifest = await readJson(join(routeCaptureOut, "evidence", "manifest.json"));
+  assert.equal(routeManifest.viewports.length, routeInventory.routes.length);
+  assert.ok(routeManifest.viewports.some((view) => view.routeId && view.routePath === "/about"));
+  assert.ok(routeManifest.viewports.some((view) => view.routePath === "/private" && view.captureStatus === "failed"));
+  assert.ok(routeManifest.artifacts.some((artifact) => artifact.path.startsWith("source/screenshots/route-")));
+
+  const routeSubset = join(out, "route-subset.json");
+  const successfulRoutes = routeInventory.routes.filter((route) => route.discoveryStatus === "captured" && ["/", "/about"].includes(route.routePath));
+  assert.equal(successfulRoutes.length, 2);
+  await writeFile(routeSubset, JSON.stringify({ ...routeInventory, routes: successfulRoutes }));
+  const routeSubsetOut = join(out, "route-subset-source");
+  await expectCode("capture-source.mjs", ["--url", url, "--routes", routeSubset, "--out", routeSubsetOut, "--viewports", "desktop"], 0);
+  await expectCode("pixel-perfect-clone.mjs", ["export-design", "--source", routeSubsetOut], 0);
+  const routeTokens = await readJson(join(routeSubsetOut, "evidence", "tokens.json"));
+  assert.equal(routeTokens.captures.length, 2);
+  assert.equal(new Set(routeTokens.captures.map((capture) => capture.routeId)).size, 2);
+  assert.deepEqual(routeTokens.breakpoints.observedTransitions, []);
+  const routeDesign = await readJson(join(routeSubsetOut, "design-system", "design-system.json"));
+  assert.equal(routeDesign.sourceCaptures.length, 2);
+  assert.ok(routeDesign.layout.observedSectionGeometry.every((layout) => layout.routeId));
+
+  // Verify all discovered routes and finalize only after the machine report and human gates pass.
+  await expectCode("verify-clone.mjs", ["--source", routeSubsetOut, "--clone-url", url], 0);
+  const manualReviewPath = join(routeSubsetOut, "verification", "manual-review.json");
+  const manualGates = {
+    "structural completeness": "pass",
+    "assets and loaded fonts": "pass",
+    "high-value computed-style parity": "pass",
+    "micro-detail audit": "pass",
+    "observed meaningful interactions": "pass",
+    "fresh independent review when supported": "pass",
+    "post-correction regression": "pass",
+  };
+  await writeFile(manualReviewPath, JSON.stringify({ gates: manualGates, gateReasons: {}, limitations: [] }));
+  await expectCode("finalize.mjs", ["--source", routeSubsetOut], 2);
+  const finalVerdict = await readJson(join(routeSubsetOut, "verification", "final-verdict.json"));
+  assert.equal(finalVerdict.status, "manual_review_required");
+  assert.equal(finalVerdict.manualGates["discovery route coverage"], "pending");
+  assert.equal(finalVerdict.manualGates["functional behavior verification"], "pending");
+  assert.equal(finalVerdict.manualGates["build health"], "pending");
+  assert.equal(finalVerdict.manualGates["handoff validation"], "pending");
+  assert.doesNotMatch(finalVerdict.conclusion, /^VERIFIED/);
+  const savedReportPath = join(routeSubsetOut, "verification", "fidelity-report.json");
+  const savedReport = await readJson(savedReportPath);
+  await writeFile(savedReportPath, JSON.stringify({ ...savedReport, sectionGate: "fail" }));
+  await expectCode("finalize.mjs", ["--source", routeSubsetOut], 1);
+  const rejectedVerdict = await readJson(join(routeSubsetOut, "verification", "final-verdict.json"));
+  assert.equal(rejectedVerdict.status, "blocked");
+  await writeFile(savedReportPath, JSON.stringify(savedReport));
+
+  // 3. Frozen evidence is checksum-clean and the token report is generated.
   await expectCode("evidence-check.mjs", ["--source", out], 0);
   const tokens = await readJson(join(out, "evidence", "tokens.json"));
   assert.ok(tokens.colors.some((color) => color.value === "rgb(17, 24, 39)"));
@@ -117,6 +229,12 @@ try {
   const cta = states.find((state) => state.text === "Start now");
   assert.ok(cta, "CTA state was not captured");
   assert.ok(cta.hover && cta.hover.transform !== cta.base.transform);
+  const stateCssOut = join(out, "state-css");
+  await expectCode("capture-states.mjs", ["--url", `${url}/state-css`, "--out", stateCssOut], 0);
+  const stateCss = await readJson(join(stateCssOut, "evidence", "states-desktop.json"));
+  const stateCssText = JSON.stringify(stateCss);
+  assert.doesNotMatch(stateCssText, /user:pass|state_token|state-secret|fragment/);
+  assert.ok(stateCss.some((state) => state.base.backgroundImage.includes(`${url}/state-pixel`)));
 
   // 5. A missing clone fails the visual gate instead of passing silently.
   const emptyClone = join(out, "empty-clone");

@@ -1,0 +1,17 @@
+{
+  "gates": {
+    "discovery route coverage": "pending",
+    "structural completeness": "pending",
+    "assets and loaded fonts": "pending",
+    "high-value computed-style parity": "pending",
+    "micro-detail audit": "pending",
+    "functional behavior verification": "pending",
+    "observed meaningful interactions": "pending",
+    "build health": "pending",
+    "handoff validation": "pending",
+    "fresh independent review when supported": "pending",
+    "post-correction regression": "pending"
+  },
+  "gateReasons": {},
+  "limitations": []
+}

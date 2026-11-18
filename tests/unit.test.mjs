@@ -1,19 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PNG } from "pngjs";
 import {
+  DEFAULT_CAPTURE_PROFILE,
   DEFAULT_THRESHOLDS,
+  captureProfileFrom,
+  captureProfileFromManifest,
   parseArgs,
+  publicSourceUrl,
   resolveViewports,
+  routeAwareViewports,
   safeName,
   thresholdsFromArgs,
   viewportsFromManifest,
 } from "../lib/core.mjs";
 import { clampRect, cropPng } from "../lib/crops.mjs";
-import { buildManifest, verifyArtifacts } from "../lib/evidence.mjs";
+import { archiveBaseline, buildManifest, verifyArtifacts, writeManifest } from "../lib/evidence.mjs";
+import { buildDesignSystem, renderDesignSystemMarkdown, renderDesignTokensCss } from "../lib/design-system.mjs";
+import { normalizeRouteUrl } from "../lib/discover.mjs";
 import {
   buildTriage,
   compareObservations,
@@ -28,9 +35,11 @@ import {
   classifySectionVisual,
   classifyVisualResult,
   exitCodeFor,
+  finalizeVerdict,
   summarizeGate,
 } from "../lib/verdict.mjs";
 import { diffPng } from "../lib/visual.mjs";
+import { snapshotInteractiveState, trackAssets } from "../lib/observe.mjs";
 
 const BASE_STYLE = {
   fontFamily: "Arial",
@@ -132,13 +141,51 @@ test("viewportsFromManifest uses captured sizes and falls back to presets", () =
   assert.deepEqual(viewportsFromManifest({}).map((view) => view.name), ["desktop", "tablet", "mobile"]);
 });
 
+test("manifest view names are safe and viewport overrides preserve all captured routes", () => {
+  const manifest = { viewports: [
+    { name: "route-aaaaaaaaaa__desktop", viewport: { width: 1440, height: 1000 }, routeId: "route-aaaaaaaaaa", routePath: "/a", viewportName: "desktop" },
+    { name: "route-bbbbbbbbbb__desktop", viewport: { width: 1440, height: 1000 }, routeId: "route-bbbbbbbbbb", routePath: "/b", viewportName: "desktop" },
+  ] };
+  const views = routeAwareViewports(manifest, resolveViewports("mobile"));
+  assert.deepEqual(views.map(({ name, routeId, routePath, viewportName }) => ({ name, routeId, routePath, viewportName })), [
+    { name: "route-aaaaaaaaaa__mobile", routeId: "route-aaaaaaaaaa", routePath: "/a", viewportName: "mobile" },
+    { name: "route-bbbbbbbbbb__mobile", routeId: "route-bbbbbbbbbb", routePath: "/b", viewportName: "mobile" },
+  ]);
+  assert.throws(() => viewportsFromManifest({ viewports: [{ name: "../escape", viewport: { width: 1440, height: 1000 } }] }), /invalid capture name/);
+});
+
 test("sectionSlugs is content-derived, deterministic, and deduplicated", () => {
   const sections = [section({ index: 0, heading: "Pricing" }), section({ index: 1, text: "Pricing" }), section({ index: 2, text: "" })];
   const slugs = sectionSlugs(sections);
-  assert.match(slugs[0], /^pricing-[0-9a-f]{6}$/);
+  assert.match(slugs[0], /^pricing-[0-9a-f]{10}$/);
   assert.notEqual(slugs[1], slugs[0]);
-  assert.match(slugs[2], /^section-[0-9a-f]{6}$/);
+  assert.equal(slugs[2], "section");
   assert.deepEqual(sectionSlugs(sections), slugs);
+});
+
+test("duplicate region records get collision-safe slugs and ambiguous matches require review", () => {
+  const repeated = [section({ text: "Same card", heading: "Same" }), section({ index: 1, text: "Same card", heading: "Same" })];
+  const slugs = sectionSlugs(repeated);
+  assert.equal(new Set(slugs).size, 2);
+  const digest = slugs[0].split("-")[1];
+  const craftedCollision = [
+    section({ heading: `Same ${digest} 1 4`, text: "First" }),
+    ...repeated,
+    section({ heading: `Same ${digest} 1`, text: "Last" }),
+  ];
+  const collisionSafe = sectionSlugs(craftedCollision);
+  assert.equal(new Set(collisionSafe).size, craftedCollision.length);
+  const match = matchSections(repeated, [...repeated].reverse());
+  assert.deepEqual(match.pairs.map((pair) => pair.matchedBy), ["ambiguous", "ambiguous"]);
+  assert.ok(match.pairs.every((pair) => pair.matchingConfidence === "ambiguous"));
+  assert.equal(classifyGeometryComparison({
+    matchedBy: "ambiguous", status: "review", deltas: { x: 0, y: 0, width: 0, height: 0 }, styleMismatches: [],
+  }, DEFAULT_THRESHOLDS), "review");
+
+  const reordered = matchSections([section({ text: "Card Alpha" }), section({ index: 1, text: "Card Beta" })], [
+    section({ index: 0, text: "Card Beta" }), section({ index: 1, text: "Card Alpha" }),
+  ]);
+  assert.deepEqual(reordered.pairs.map((pair) => pair.cloneIndex), [1, 0]);
 });
 
 test("matchSections prefers text, then id and heading, then position", () => {
@@ -196,7 +243,7 @@ test("section diffs fail on real size drift but tolerate rounding", () => {
   assert.equal(classifySectionVisual(base, thresholds), "review");
   assert.equal(classifySectionVisual({ ...base, clone: { width: 960, height: 412 } }, thresholds), "fail");
   assert.equal(classifySectionVisual({ ...base, dimensionMismatch: false }, thresholds), "pass");
-  assert.equal(classifySectionVisual(null, thresholds), "review");
+  assert.equal(classifySectionVisual(null, thresholds), "fail");
   assert.equal(classifySectionVisual({ ...base, missing: true }, thresholds), "fail");
 });
 
@@ -214,7 +261,8 @@ test("gates summarize conservatively and map to exit codes", () => {
   assert.equal(summarizeGate(["pass", "pass"]), "pass");
   assert.equal(summarizeGate(["pass", "review"]), "review");
   assert.equal(summarizeGate(["review", "fail"]), "fail");
-  assert.equal(summarizeGate([]), "pass");
+  assert.equal(summarizeGate([]), "fail");
+  assert.equal(summarizeGate(["pass", "skipped"]), "fail");
   assert.equal(exitCodeFor("pass"), 0);
   assert.equal(exitCodeFor("fail"), 1);
   assert.equal(exitCodeFor("review"), 2);
@@ -240,6 +288,22 @@ test("triage keeps clean regions and reports no correction plan", () => {
   assert.equal(triage.summary.fix, 0);
   assert.equal(triage.correctionPlan.length, 0);
   assert.match(triage.nextAction, /manual gates/);
+});
+
+test("triage fails closed when section screenshot evidence is absent", () => {
+  const triage = triageInput({ visual: {} });
+  const sectionResult = triage.viewports[0].sections[0];
+  assert.equal(sectionResult.status, "FIX");
+  assert.equal(sectionResult.cause, "assets");
+  assert.match(sectionResult.reasons[0], /screenshot evidence is missing/);
+});
+
+test("triage labels malformed section comparisons as invalid evidence", () => {
+  const triage = triageInput({ visual: { hero: { changeRatio: NaN, missing: false, dimensionMismatch: false } } });
+  const sectionResult = triage.viewports[0].sections[0];
+  assert.equal(sectionResult.status, "FIX");
+  assert.equal(sectionResult.cause, "visual");
+  assert.match(sectionResult.reasons[0], /evidence is invalid or incomplete/);
 });
 
 test("triage marks missing regions as structural fixes first", () => {
@@ -319,6 +383,34 @@ test("tokens capture colors, type scale, spacing, variables, and breakpoints", (
   assert.ok(renderTokensMarkdown(tokens).includes("## Color"));
 });
 
+test("responsive transitions stay within a route and matched section", () => {
+  const makeView = ({ capture, routeId, viewportName, width, columns }) => {
+    const result = observation([section({ text: "Shared hero", heading: "Hero", style: { ...BASE_STYLE, gridTemplateColumns: columns } })], {
+      page: { viewport: { width, height: 900 }, backgroundColor: "rgb(248, 250, 252)" },
+      routeId,
+      routePath: `/${routeId}`,
+      viewportName,
+    });
+    return [capture, result];
+  };
+  const observations = Object.fromEntries([
+    makeView({ capture: "route-a__desktop", routeId: "route-a", viewportName: "desktop", width: 1440, columns: "1fr 1fr" }),
+    makeView({ capture: "route-a__mobile", routeId: "route-a", viewportName: "mobile", width: 390, columns: "1fr" }),
+    makeView({ capture: "route-b__desktop", routeId: "route-b", viewportName: "desktop", width: 1440, columns: "1fr" }),
+  ]);
+  const transitions = detectTransitions(observations);
+  assert.ok(transitions.some((entry) => entry.property === "gridTemplateColumns" && entry.routeId === "route-a"));
+  assert.ok(transitions.every((entry) => entry.routeId === "route-a"));
+  assert.deepEqual(transitions.find((entry) => entry.property === "gridTemplateColumns").values.map((value) => value.viewport), ["mobile", "desktop"]);
+
+  const tokens = extractTokens(observations);
+  assert.deepEqual(tokens.viewports, ["desktop", "mobile"]);
+  assert.deepEqual(tokens.captures.map((capture) => capture.routeId), ["route-a", "route-a", "route-b"]);
+  const system = buildDesignSystem(observations);
+  assert.equal(system.sourceCaptures[0].viewportName, "desktop");
+  assert.ok(system.layout.observedSectionGeometry.some((layout) => layout.routeId === "route-b"));
+});
+
 test("detectTransitions needs at least two widths", () => {
   assert.deepEqual(detectTransitions({ desktop: observation([section()]) }), []);
 });
@@ -349,28 +441,69 @@ test("diffPng detects identical, changed, and resized images", () => {
 test("manifests checksum evidence and detect tampering", async () => {
   const root = await mkdtemp(join(tmpdir(), "pixel-perfect-evidence-"));
   try {
-    await mkdir(join(root, "source"), { recursive: true });
+    await mkdir(join(root, "source", "screenshots"), { recursive: true });
     await mkdir(join(root, "evidence"), { recursive: true });
-    await writeFile(join(root, "source", "desktop.png"), "image-bytes");
+    await writeFile(join(root, "source", "screenshots", "desktop.png"), "image-bytes");
     await writeFile(join(root, "evidence", "observation-desktop.json"), "{\"sections\":[]}");
-    const manifest = await buildManifest({ out: root, sourceUrl: "https://example.com", viewports: [{ name: "desktop", viewport: { width: 1440, height: 1000 } }] });
+    await writeFile(join(root, "evidence", "sections-desktop.json"), "{\"sections\":[]}");
+    await writeFile(join(root, "evidence", "states-desktop.json"), "[]");
+    const manifest = await buildManifest({ out: root, sourceUrl: "https://example.com", viewports: [{ name: "desktop", viewport: { width: 1440, height: 1000 }, sections: 0, regionExpectation: "documented-none" }] });
     assert.equal(manifest.version, 3);
-    assert.equal(manifest.artifacts.length, 2);
+    assert.equal(manifest.artifacts.length, 4);
+    assert.ok(manifest.requiredArtifacts.includes("source/screenshots/desktop.png"));
+    assert.deepEqual(manifest.interactionStates, ["evidence/states-desktop.json"]);
+    assert.ok(manifest.requiredArtifacts.includes("evidence/states-desktop.json"));
     assert.ok(manifest.artifacts.every((artifact) => /^[0-9a-f]{64}$/.test(artifact.sha256)));
+    await writeManifest(root, manifest);
 
     const clean = await verifyArtifacts(root, manifest);
     assert.equal(clean.ok, true);
-    assert.equal(clean.checked, 2);
+    assert.equal(clean.checked, 4);
+    assert.equal(clean.manifestIntegrity.ok, true);
+    const checksumBytes = await readFile(join(root, "evidence", "manifest.sha256"));
+    const externalChecksum = join(root, "outside-checksum.sha256");
+    await writeFile(externalChecksum, checksumBytes);
+    await rm(join(root, "evidence", "manifest.sha256"));
+    await symlink(externalChecksum, join(root, "evidence", "manifest.sha256"));
+    const linkedManifestMetadata = await verifyArtifacts(root, manifest);
+    assert.equal(linkedManifestMetadata.ok, false);
+    assert.ok(linkedManifestMetadata.invalid.includes("evidence/manifest.sha256"));
+    await rm(join(root, "evidence", "manifest.sha256"));
+    await writeFile(join(root, "evidence", "manifest.sha256"), checksumBytes);
+    const substitutedManifest = await verifyArtifacts(root, { ...manifest, sourceUrl: "https://altered.example" });
+    assert.equal(substitutedManifest.manifestIntegrity.ok, false);
+    const archive = await archiveBaseline(root, "test refresh");
+    assert.ok(archive);
+    assert.match(await readFile(join(archive, "audit.json"), "utf8"), /test refresh/);
+    assert.ok(await readFile(join(archive, "evidence", "manifest.sha256"), "utf8"));
 
-    await writeFile(join(root, "source", "desktop.png"), "tampered");
+    await writeFile(join(root, "source", "screenshots", "desktop.png"), "tampered");
     const tampered = await verifyArtifacts(root, manifest);
     assert.equal(tampered.ok, false);
-    assert.deepEqual(tampered.mismatched, ["source/desktop.png"]);
+    assert.deepEqual(tampered.mismatched, ["source/screenshots/desktop.png"]);
+
+    await writeFile(join(root, "evidence", "unexpected.json"), "untracked");
+    const unexpected = await verifyArtifacts(root, manifest);
+    assert.deepEqual(unexpected.unexpected, ["evidence/unexpected.json"]);
+
+    await writeFile(join(root, "outside.json"), "outside bundle");
+    await symlink(join(root, "outside.json"), join(root, "source", "linked.json"));
+    const linked = await verifyArtifacts(root, manifest);
+    assert.ok(linked.unexpected.includes("source/linked.json"));
+    const invalidPath = await verifyArtifacts(root, {
+      ...manifest,
+      artifacts: [...manifest.artifacts, { path: "source/../outside.json", bytes: 13, sha256: "a".repeat(64) }],
+    });
+    assert.ok(invalidPath.invalid.includes("source/../outside.json"));
 
     await rm(join(root, "evidence", "observation-desktop.json"));
     const missing = await verifyArtifacts(root, manifest);
     assert.deepEqual(missing.missing, ["evidence/observation-desktop.json"]);
     assert.match(missing.message, /integrity failed/);
+    await writeFile(join(root, "evidence", "manifest.json"), JSON.stringify({ ...manifest, sourceUrl: "https://altered.example" }));
+    const alteredManifest = await verifyArtifacts(root, manifest);
+    assert.equal(alteredManifest.ok, false);
+    assert.equal(alteredManifest.manifestIntegrity.ok, false);
 
     assert.equal((await verifyArtifacts(root, { artifacts: [] })).ok, false);
   } finally {
@@ -378,29 +511,193 @@ test("manifests checksum evidence and detect tampering", async () => {
   }
 });
 
-test("fidelity report fails closed when a report is missing", () => {
+test("fidelity gates fail closed on empty, missing, invalid, or unsupported evidence", () => {
   const thresholds = DEFAULT_THRESHOLDS;
   const cleanVisual = { results: [{ viewport: "desktop", changedPixels: 0, totalPixels: 100, changeRatio: 0, dimensionMismatch: false, missing: false }] };
-  const cleanSections = { viewports: [{ viewport: "desktop", sections: [{ name: "hero", changeRatio: 0, dimensionMismatch: false, missing: false, source: { width: 10, height: 10 }, clone: { width: 10, height: 10 } }], extra: [] }] };
-  const cleanGeometry = { results: [{ viewport: "desktop", comparisons: [{ matchedBy: "text", status: "measured", deltas: { x: 0, y: 0, width: 0, height: 0 }, styleMismatches: [] }] }] };
-  const manifest = { sourceUrl: "https://example.com", tool: { version: "3.0.0" } };
+  const cleanSections = { viewports: [{ viewport: "desktop", expectedCount: 1, capturedCount: 1, coverage: "complete", sections: [{ name: "hero", changeRatio: 0, dimensionMismatch: false, missing: false, source: { width: 10, height: 10 }, clone: { width: 10, height: 10 } }], extra: [] }] };
+  const cleanGeometry = { results: [{ viewport: "desktop", comparisons: [{ matchedBy: "text", status: "measured", deltas: { x: 0, y: 0, width: 0, height: 0 }, styleMismatches: [] }], extra: [] }] };
+  const manifest = { sourceUrl: "https://example.com", tool: { version: "3.0.0" }, viewports: [{ name: "desktop", sections: 1, regionExpectation: "required" }] };
   const pass = buildFidelityReport({ manifest, cloneUrl: "http://localhost:3000", visual: cleanVisual, sections: cleanSections, geometry: cleanGeometry, triage: null, thresholds });
   assert.equal(pass.machineGate, "pass");
-  assert.equal(pass.conclusion.startsWith("Not verified"), true);
+  assert.equal(pass.machineChecksPassed, true);
+  assert.equal(pass.finalStatus, "manual_review_required");
+  assert.match(pass.conclusion, /Machine checks passed/);
 
-  const fail = buildFidelityReport({ manifest, cloneUrl: "http://localhost:3000", visual: { results: [] }, sections: cleanSections, geometry: cleanGeometry, triage: null, thresholds });
-  assert.equal(fail.machineGate, "fail");
-
-  const extra = buildFidelityReport({
-    manifest,
-    cloneUrl: "http://localhost:3000",
-    visual: cleanVisual,
-    sections: { viewports: [{ viewport: "desktop", sections: [], extra: ["invented-region"] }] },
-    geometry: cleanGeometry,
-    triage: null,
-    thresholds,
+  const missingVisual = buildFidelityReport({ manifest, cloneUrl: "http://localhost:3000", visual: { results: [] }, sections: cleanSections, geometry: cleanGeometry, triage: null, thresholds });
+  assert.equal(missingVisual.machineGate, "fail");
+  const missingRegions = buildFidelityReport({
+    manifest, cloneUrl: "http://localhost:3000", visual: cleanVisual,
+    sections: { viewports: [{ viewport: "desktop", expectedCount: 0, capturedCount: 0, coverage: "missing", sections: [], extra: [] }] },
+    geometry: cleanGeometry, triage: null, thresholds,
   });
+  assert.equal(missingRegions.sectionGate, "fail");
+  assert.equal(missingRegions.machineGate, "fail");
+  const failedCrop = buildFidelityReport({
+    manifest, cloneUrl: "http://localhost:3000", visual: cleanVisual,
+    sections: { viewports: [{ viewport: "desktop", expectedCount: 1, capturedCount: 0, coverage: "failed", sections: [{ name: "hero", missing: true, sourceCaptureFailed: true }], extra: [] }] },
+    geometry: cleanGeometry, triage: null, thresholds,
+  });
+  assert.equal(failedCrop.sectionGate, "fail");
+  const missingGeometry = buildFidelityReport({ manifest, cloneUrl: "http://localhost:3000", visual: cleanVisual, sections: cleanSections, geometry: { results: [] }, triage: null, thresholds });
+  assert.equal(missingGeometry.geometryGate, "fail");
+  const invalidRatio = buildFidelityReport({ manifest, cloneUrl: "http://localhost:3000", visual: { results: [{ ...cleanVisual.results[0], changeRatio: NaN }] }, sections: cleanSections, geometry: cleanGeometry, triage: null, thresholds });
+  assert.equal(invalidRatio.visualGate, "fail");
+  const extraGeometry = buildFidelityReport({
+    manifest, cloneUrl: "http://localhost:3000", visual: cleanVisual, sections: cleanSections,
+    geometry: { results: [{ ...cleanGeometry.results[0], extra: [{ index: 1, selector: "section.extra", text: "Unexpected" }] }] },
+    triage: null, thresholds,
+  });
+  assert.equal(extraGeometry.geometryGate, "fail");
+  assert.equal(extraGeometry.machineGate, "fail");
+  const unsupported = buildFidelityReport({
+    manifest, cloneUrl: "http://localhost:3000", visual: cleanVisual, sections: cleanSections,
+    geometry: { results: [{ viewport: "desktop", comparisons: [{ matchedBy: "unknown", status: "measured", deltas: { x: 0, y: 0, width: 0, height: 0 }, styleMismatches: [] }] }] },
+    triage: null, thresholds,
+  });
+  assert.equal(unsupported.geometryGate, "fail");
+
+  const documentedNone = buildFidelityReport({
+    manifest: { ...manifest, viewports: [{ name: "desktop", sections: 0, regionExpectation: "documented-none" }] },
+    cloneUrl: "http://localhost:3000", visual: cleanVisual,
+    sections: { viewports: [{ viewport: "desktop", expectedCount: 0, capturedCount: 0, regionExpectation: "documented-none", coverage: "not_expected", sections: [], extra: [] }] },
+    geometry: { results: [{ viewport: "desktop", comparisons: [], extra: [] }] }, triage: null, thresholds,
+  });
+  assert.equal(documentedNone.machineGate, "pass");
+
+  const extra = buildFidelityReport({ manifest, cloneUrl: "http://localhost:3000", visual: cleanVisual, sections: { viewports: [{ viewport: "desktop", sections: [], extra: ["invented-region"] }] }, geometry: cleanGeometry, triage: null, thresholds });
   assert.deepEqual(extra.extraRegions, [{ viewport: "desktop", name: "invented-region" }]);
+});
+
+test("final verdict requires current complete machine evidence and documented manual gates", () => {
+  const manifest = {
+    sourceUrl: "https://example.com",
+    capturedAt: "2026-01-01T00:00:00.000Z",
+    viewports: [{ name: "desktop", sections: 1, regionExpectation: "required", captureStatus: "captured" }],
+  };
+  const makeReport = (changeRatio = 0) => buildFidelityReport({
+    manifest,
+    cloneUrl: "http://localhost",
+    visual: { results: [{ viewport: "desktop", changedPixels: 0, totalPixels: 100, changeRatio, dimensionMismatch: false, missing: false }] },
+    sections: { viewports: [{
+      viewport: "desktop", expectedCount: 1, capturedCount: 1, coverage: "complete", regionExpectation: "required",
+      sections: [{ name: "hero", missing: false, dimensionMismatch: false, changeRatio: 0, source: { width: 10, height: 10 }, clone: { width: 10, height: 10 }, result: "pass" }],
+      extra: [],
+    }] },
+    geometry: { results: [{
+      viewport: "desktop",
+      comparisons: [{ matchedBy: "text", status: "measured", deltas: { x: 0, y: 0, width: 0, height: 0 }, styleMismatches: [] }],
+      extra: [],
+    }] },
+    thresholds: DEFAULT_THRESHOLDS,
+  });
+  const report = makeReport();
+  const integrity = { ok: true, message: "verified" };
+  const gates = Object.fromEntries(Object.keys(report.manualGates).map((gate) => [gate, "pass"]));
+  assert.equal(finalizeVerdict({ report, integrity, manifest }).status, "manual_review_required");
+  assert.equal(finalizeVerdict({ report, integrity, manifest, review: { gates } }).status, "fully_verified");
+
+  const limitation = "Source interaction endpoint was unavailable for observation";
+  const limitedGates = { ...gates, "observed meaningful interactions": "not_applicable" };
+  assert.equal(finalizeVerdict({
+    report, integrity, manifest,
+    review: { gates: limitedGates, gateReasons: { "observed meaningful interactions": limitation }, limitations: [limitation] },
+  }).status, "ready_with_limitations");
+  assert.equal(finalizeVerdict({
+    report, integrity, manifest,
+    review: { gates: limitedGates, gateReasons: { "observed meaningful interactions": limitation }, limitations: ["unrelated limitation"] },
+  }).status, "manual_review_required");
+
+  const inconsistent = { ...report, sectionGate: "fail" };
+  assert.equal(finalizeVerdict({ report: inconsistent, integrity, manifest, review: { gates } }).status, "blocked");
+  assert.equal(finalizeVerdict({ report, integrity, manifest: { ...manifest, capturedAt: "2026-02-01T00:00:00.000Z" }, review: { gates } }).status, "blocked");
+  assert.equal(finalizeVerdict({ report, integrity: { ok: false, message: "tampered" }, manifest, review: { gates } }).status, "blocked");
+  assert.equal(finalizeVerdict({ report: makeReport(0.5), integrity, manifest, review: { gates } }).status, "failed");
+});
+
+test("discovery URL normalization keeps scope narrow and collapses query and fragments", () => {
+  const allowed = new Set(["https://example.com"]);
+  assert.equal(normalizeRouteUrl("/pricing/?campaign=x#plans", "https://example.com/start", allowed), "https://example.com/pricing");
+  assert.equal(normalizeRouteUrl("https://outside.example/path", "https://example.com", allowed), null);
+  assert.equal(normalizeRouteUrl("javascript:alert(1)", "https://example.com", allowed), null);
+  assert.equal(publicSourceUrl("https://example.com/path?access_token=secret#fragment"), "https://example.com/path");
+  assert.throws(() => publicSourceUrl("https://user:pass@example.com/path"), /embedded credentials/);
+  assert.throws(() => publicSourceUrl("file:///etc/passwd"), /HTTP\(S\)/);
+});
+
+test("interaction-state CSS and asset failures never retain credentialed or query-bearing URLs", () => {
+  const originalDocument = globalThis.document;
+  const originalGetComputedStyle = globalThis.getComputedStyle;
+  globalThis.document = { baseURI: "https://fixture.example/page" };
+  globalThis.getComputedStyle = () => ({
+    background: 'url("https://user:pass@assets.example/image.svg?access_token=private#fragment")',
+    backgroundImage: 'url("/asset.svg?session=private#state")',
+    color: "rgb(1, 2, 3)",
+  });
+  try {
+    const element = {
+      tagName: "BUTTON",
+      innerText: "Start",
+      tabIndex: 0,
+      disabled: false,
+      getAttribute: () => null,
+      getBoundingClientRect: () => ({ width: 40, height: 20 }),
+    };
+    const state = snapshotInteractiveState(element, ["background", "backgroundImage", "color"]);
+    assert.equal(state.style.background, 'url("https://assets.example/image.svg")');
+    assert.equal(state.style.backgroundImage, 'url("https://fixture.example/asset.svg")');
+    assert.doesNotMatch(JSON.stringify(state), /user:pass|access_token|private|session|fragment|state/);
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalGetComputedStyle === undefined) delete globalThis.getComputedStyle;
+    else globalThis.getComputedStyle = originalGetComputedStyle;
+  }
+
+  const handlers = new Map();
+  const assets = trackAssets({ on: (event, handler) => handlers.set(event, handler) });
+  handlers.get("requestfailed")({
+    resourceType: () => "image",
+    url: () => "https://user:pass@assets.example/image.svg?access_token=private#fragment",
+    failure: () => ({ errorText: "net::ERR_FAILED while loading https://user:pass@assets.example/image.svg?access_token=private#fragment" }),
+  });
+  const serialized = JSON.stringify([...assets.values()]);
+  assert.doesNotMatch(serialized, /user:pass|access_token|private|fragment|assets\.example.*\?/);
+  assert.match(serialized, /net::ERR_FAILED/);
+});
+
+test("capture profiles are deterministic and validate browser context options", () => {
+  assert.deepEqual(captureProfileFrom(), DEFAULT_CAPTURE_PROFILE);
+  assert.deepEqual(captureProfileFromManifest({ ...DEFAULT_CAPTURE_PROFILE, browserVersion: "Chromium 123" }), DEFAULT_CAPTURE_PROFILE);
+  assert.throws(() => captureProfileFrom({ browserVersion: "Chromium 123" }), /Unsupported capture profile field/);
+  assert.equal(captureProfileFrom({ colorScheme: "dark", locale: "fr-FR" }).colorScheme, "dark");
+  assert.throws(() => captureProfileFrom({ browser: "firefox" }), /Only the installed Chromium/);
+  assert.throws(() => captureProfileFrom({ deviceScaleFactor: 10 }), /deviceScaleFactor/);
+  assert.throws(() => captureProfileFrom({ stabilizationFrames: 0 }), /stabilizationFrames/);
+  assert.throws(() => captureProfileFrom({ stabilitySamples: 1 }), /stabilitySamples/);
+  assert.throws(() => captureProfileFrom({ resourceTimeoutMs: 30_001 }), /resourceTimeoutMs/);
+  assert.throws(() => captureProfileFrom({ waitForImages: "false" }), /waitForImages.*boolean/);
+  assert.throws(() => captureProfileFrom({ accessToken: "secret" }), /Unsupported capture profile field/);
+});
+
+test("design-system export includes measured headings, layouts, components, docs, and CSS", () => {
+  const desktop = observation([section({
+    classes: ["hero"],
+    style: { ...BASE_STYLE, display: "grid", maxWidth: "960px", gridTemplateColumns: "1fr 1fr", gap: "24px" },
+  })], {
+    headingObservations: [{ level: "h1", text: "Welcome", rect: { x: 0, y: 0, width: 100, height: 32 }, style: { ...BASE_STYLE, fontSize: "32px", fontWeight: "700" } }],
+    interactive: [
+      section({ tag: "button", text: "Start now", classes: ["primary"], style: { ...BASE_STYLE, borderRadius: "11px", backgroundColor: "rgb(109, 40, 217)" } }),
+      section({ tag: "button", text: "Learn more", classes: ["secondary"], style: { ...BASE_STYLE, borderRadius: "11px", backgroundColor: "rgb(109, 40, 217)" } }),
+    ],
+  });
+  const system = buildDesignSystem({ desktop });
+  assert.equal(system.typography.headingHierarchy[0].level, "h1");
+  assert.equal(system.layout.gridAndFlex[0].display, "grid");
+  const buttons = system.components.filter((component) => component.tag === "button");
+  assert.equal(buttons.length, 2);
+  assert.equal(new Set(buttons.map((component) => component.id)).size, 2);
+  assert.match(renderDesignSystemMarkdown(system), /Reusable design system/);
+  assert.match(renderDesignTokensCss(system), /--pp-color-01/);
 });
 
 test("core exports the documented defaults", () => {

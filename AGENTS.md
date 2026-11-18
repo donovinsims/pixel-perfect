@@ -95,21 +95,23 @@ run always keeps it and prints `fixture: evidence retained at … (failure)`.
 ## 4. The pipeline in one screen
 
 ```text
-capture-source ──► .clone/source/ (screenshots, region crops, rendered.html)
-                   .clone/evidence/ (observations, tokens, assets, manifest v3)
-                          │  frozen + checksummed
+discover (optional) ──► .clone/discovery/ (routes, site map, coverage)
+                              │ inspect scope and truncation
+                              ▼
+capture-source ──► .clone/source/ (screenshots, route pages, region crops)
+                   .clone/evidence/ (observations, profile, tokens, manifest v3)
+                          │ frozen + checksummed
                           ▼
                  implement the clone in the target project
                           │
                           ▼
-verify ──► capture clone once ──► full-page diff
-                                  section diff
-                                  geometry + style comparison
+verify ──► capture clone once ──► full-page/section/geometry gates
                                   triage (KEEP / FIX / RECHECK)
                                   fidelity report + exit code 0/1/2
                           │
                           ▼
-                 fix in cause-priority order, verify again (≤ 5 rounds)
+                 export-design (optional) → measured docs and CSS tokens
+                 finalize → integrity + explicit human gates + final verdict
 ```
 
 Two re-entry points exist so you do not recapture unnecessarily:
@@ -133,6 +135,7 @@ Two re-entry points exist so you do not recapture unnecessarily:
 | `scripts/compare-geometry.mjs` | Offline or URL geometry comparison | Geometry-only workflows |
 | `scripts/extract-tokens.mjs` | Regenerate tokens from an existing bundle | Token output location/behavior |
 | `scripts/evidence-check.mjs` | Manifest verification CLI (JSON verdict) | Integrity reporting |
+| `scripts/discover.mjs`, `scripts/export-design.mjs`, `scripts/finalize.mjs` | Discovery, design export, and final-verdict CLIs | Route scope, export schema, or human gates |
 | `scripts/run-dembrandt.mjs` | Optional Dembrandt cross-check | Redaction or availability handling |
 | `lib/core.mjs` | Constants (`TOOL_VERSION`, `MANIFEST_VERSION`, `VIEWPORTS`, `DEFAULT_THRESHOLDS`), arg parsing, viewport resolution, thresholds, fs/JSON/hash helpers, browser launch, `settle` | Shared primitives only; keep it dependency-light |
 | `lib/observe.mjs` | The single in-page measurement function, `STYLE_KEYS`, interactive selector, asset tracking | What is measured |
@@ -142,7 +145,9 @@ Two re-entry points exist so you do not recapture unnecessarily:
 | `lib/visual.mjs` | pixelmatch wrapper, full-page and section reports | Diff mechanics |
 | `lib/verdict.mjs` | Gate classification, exit codes, fidelity report (pure) | Thresholds, gates, report shape |
 | `lib/tokens.mjs` | Design-token extraction and Markdown rendering | Token categories or report |
-| `lib/evidence.mjs` | Manifest v3 build/verify, artifact hashing | Integrity rules |
+| `lib/evidence.mjs` | Manifest v3 build/verify, artifact hashing, safe baseline archives | Integrity rules |
+| `lib/discover.mjs` | Bounded, scoped route discovery and sitemap/robots processing | Discovery limits and route contracts |
+| `lib/design-system.mjs` | Reusable system aggregation and JSON/Markdown/CSS rendering | Export schema and inferred roles |
 | `lib/verify.mjs` | Orchestrates a verification round | Round sequencing |
 | `tests/unit.test.mjs` | Pure logic tests (no browser) | Every pure behavior change |
 | `tests/fixture-test.mjs` | Real-browser end-to-end fixture | Browser-coupled changes |
@@ -161,52 +166,62 @@ and map thrown errors to `process.exitCode = 1`. Put logic in `lib/`, not in a s
 
 ```text
 .clone/
+├── discovery/                       # routes.json, site-map.json, route-coverage.json, SITE-MAP.md
 ├── source/
-│   ├── rendered.html                 # desktop DOM snapshot (capture-source only)
-│   ├── screenshots/<viewport>.png    # full-page screenshots
-│   └── sections/<viewport>/<slug>.png
+│   ├── rendered.html                 # sanitized single-route desktop snapshot
+│   ├── routes/<route-id>/rendered.html
+│   ├── screenshots/<view-name>.png   # route views: <route-id>__<viewport>.png
+│   └── sections/<view-name>/<slug>.png
 ├── evidence/
-│   ├── manifest.json                 # v3, checksums (see below)
-│   ├── observation-<viewport>.json
-│   ├── sections-<viewport>.json
+│   ├── manifest.json                 # v3, checksums and route/profile metadata
+│   ├── manifest.sha256               # checksum of manifest.json
+│   ├── observation-<view-name>.json
+│   ├── sections-<view-name>.json
 │   ├── tokens.json / tokens.md
 │   ├── assets.json
 │   └── states-<viewport>.json        # after capture-states
+├── baseline-history/<timestamp>/     # archived source/evidence before refresh
 └── verification/                     # written by verify; never hashed
     ├── clone/                        # clone screenshots, observations, section crops
-    ├── diffs/<viewport>.png + visual-report.json
-    ├── sections/<viewport>/<slug>.png + sections-report.json
+    ├── diffs/<view-name>.png + visual-report.json
+    ├── sections/<view-name>/<slug>.png + sections-report.json
     ├── geometry-report.json
     ├── triage.json / triage.md
-    └── fidelity-report.json / fidelity-report.md
+    ├── fidelity-report.json / fidelity-report.md
+    └── final-verdict.json / final-verdict.md
 ```
 
-`verification/tokens/` appears when `extract-tokens` is run with its default output path.
+`verification/tokens/` appears when `extract-tokens` is run with its default output path. Discovery and design-system exports are outside the frozen evidence bundle.
 
 ### 6.2 `evidence/manifest.json` (version 3)
 
 | Field | Meaning |
 | --- | --- |
-| `version` | `3`. A schema change that older code cannot read requires bumping this. |
+| `version` | `3`; additive fields remain backward-readable. Bump only if old bundles cannot be read. |
 | `tool` | `{ name: "pixel-perfect-clone", version }` |
-| `sourceUrl` | Captured URL as given |
+| `sourceUrl` | Query/fragment-free source URL; credentials are rejected. |
 | `capturedAt` | ISO timestamp |
-| `viewports` | `[{ name, viewport: { width, height }, sections, cropped }]` |
-| `artifacts` | `[{ path, bytes, sha256 }]` for every file under `source/` and `evidence/`, excluding `evidence/manifest.json` |
-| `warnings` | Capture warnings (no regions detected, unreadable cross-origin stylesheets) |
-| `safety` | Fixed statement about the captured data boundary |
+| `captureProfile` | Allowlisted Chromium, locale, settling, and bounded stability settings. |
+| `viewports` | View names, dimensions, route ID/path/URL, region expectation, capture status, and render stability. |
+| `requiredArtifacts` | Screenshots, observations, section summaries/crops, and interaction-state files required for this baseline. |
+| `manifestChecksum` | `evidence/manifest.sha256`; checksum of the exact manifest bytes. |
+| `interactionStates` | Hashed state-observation paths. |
+| `artifacts` | `[{ path, bytes, sha256 }]` for regular files under `source/` and `evidence/`, excluding `manifest.json` and `manifest.sha256`. |
+| `warnings` | Capture warnings, failed crops, instability, missing regions, and unreadable cross-origin stylesheets. |
+| `safety` | Fixed statement about the captured data boundary. |
 
-Rules: hashing is recursive, sorted, and excludes `verification/`. `verifyArtifacts` returns
-`ok: false` when the manifest has **no** checksums — an empty manifest never verifies.
+Hashing is recursive and sorted; verification output, discovery, exports, and baseline archives are excluded. New bundles require a valid manifest checksum, regular (non-symlink) manifest/checksum files, all required files, and no unexpected or symlinked bundle entries under `source/` or `evidence/`. Unsafe, duplicate, or out-of-bundle artifact paths fail. Legacy v3 manifests without a manifest-checksum field remain readable; an empty artifact list never verifies.
 
 ### 6.3 `observation-<viewport>.json`
 
 Produced by `observePage`; the comparison unit for geometry.
 
-Top level: `title`, `route`, `url`, `capturedAt`, `page` (`scrollWidth`, `scrollHeight`,
-`viewport`, `background`, `backgroundColor`), `body` (`selector`, `style`, `rect`), `fonts`,
-`fontFaces`, `cssVariables`, `mediaQueries`, `stylesheets` (`total`, `inaccessible`),
-`sections[]`, `interactive[]`, `media[]`, `headings[]`.
+Top level: `title`, `route`, `url`, `routeId`, `routePath`, `viewportName`, `renderStability`,
+`capturedAt`, `page` (`scrollWidth`, `scrollHeight`, `viewport`, `background`, `backgroundColor`),
+`body` (`selector`, `style`, `rect`), `fonts`, `fontFaces`, `cssVariables`, `mediaQueries`,
+`stylesheets` (`total`, `inaccessible`), `sections[]`, `interactive[]`, `media[]`, `headings[]`,
+`headingObservations[]`. Route and viewport metadata are explicit; the artifact filename is not
+used to infer the actual responsive width or route.
 
 Each section/interactive record carries `index`, `selector`, `tag`, `id`, `role`, `classes`
 (max 12), `text` (max 220 chars), `heading` (max 120), `rect` (viewport space),
@@ -221,11 +236,12 @@ Section selection order:
 
 `text` is extracted by walking text nodes and inserting a boundary space after visible
 element children, so adjacent inline links do not concatenate (`HomePricing`). Script,
-style, noscript, and unrendered nodes are skipped.
+style, noscript, and unrendered nodes are skipped. URL-bearing computed styles, CSS variables,
+font-face sources, media URLs, and asset URLs remove credentials, queries, and fragments.
 
-### 6.4 `sections-<viewport>.json`
+### 6.4 `sections-<capture>.json`
 
-`{ viewport, viewportSize, sections: [{ index, slug, selector, role, text, rect, documentRect, bytes }] }`
+`{ viewport, viewportSize, routeId, routePath, viewportName, sections: [{ index, slug, selector, role, text, rect, documentRect, bytes, captureStatus }] }`
 
 Crops are produced by slicing the stored full-page PNG, not by re-rendering the element, so
 the crop is exactly the pixels the full-page diff scored.
@@ -246,19 +262,26 @@ Causes and priorities: `structural` 1, `foundation` 2, `geometry` 3, `assets` 4,
 ### 6.6 `fidelity-report.json`
 
 `toolVersion`, `sourceUrl`, `cloneUrl`, `generatedAt`, `thresholds`, `visualGate`,
-`sectionGate`, `geometryGate`, `machineGate`, `conclusion`, `viewports[]`, `sections[]`,
-`geometrySummary` (`measured`, `review`, `missing`, `styleMismatches`), `triageSummary`,
-`correctionPlan`, `extraRegions`, `requiredManualGates`.
+`sectionGate`, `geometryGate`, `machineGate`, `machineChecksPassed`, `finalStatus`,
+`conclusion`, `viewports[]`, `sections[]`, `geometrySummary` (`measured`, `review`, `missing`,
+`styleMismatches`), `triageSummary`, `correctionPlan`, `extraRegions`, `requiredManualGates`,
+`manualGates`.
 
-`conclusion` is always `Not verified — …` because the machine report cannot certify the
-manual gates. Do not "upgrade" it to Verified from machine evidence.
+The machine conclusion distinguishes failed evidence, unresolved review-band results, and
+machine checks passed with human review still required. `finalStatus` is only `failed` or
+`manual_review_required` here; the report cannot declare final verification. `finalize` writes a
+separate verdict after integrity is rechecked and explicit human gates are supplied.
 
 ### 6.7 `tokens.json`
 
-`viewports`, `provenance`, `colors`, `backgrounds`, `borders`, `radii`, `shadows`,
-`spacing` (px-sorted), `typography` (`families`, `sizes`, `weights`, `lineHeights`, `scale`),
-`fonts`, `fontFaces`, `cssVariables`, `breakpoints` (`mediaQueries`,
-`observedTransitions`), `fingerprint` (hash of colors/families/sizes/radii).
+`viewports` (actual responsive profile names), `captures[]` (`name`, `viewportName`,
+`routeId`, `routePath`, dimensions), `variableObservations[]`, `provenance`, `colors`,
+`backgrounds`, `borders`, `radii`, `shadows`, `spacing` (px-sorted), `typography`
+(`families`, `sizes`, `weights`, `lineHeights`, `scale`), `fonts`, `fontFaces`, `cssVariables`,
+`breakpoints` (`mediaQueries`, `observedTransitions`), `fingerprint` (hash of
+colors/families/sizes/radii). Token entries also retain viewport, route, and capture provenance.
+Responsive transitions compare matched regions only within the same route; separate routes at
+the same width are never treated as breakpoints.
 
 Values come from computed styles. The Markdown report labels them as measured; a nearby
 framework token is still wrong when the source measures something else.
@@ -269,23 +292,25 @@ framework token is still wrong when the source measures something else.
 
 ### 7.1 Region identity (slugs)
 
-`sectionSlugs` builds a base from the heading, else the text: lowercase, non-alphanumerics to
-spaces, first four words, hyphenated, `safeName`-cleaned, max 48 chars. Fallbacks are
-`id-<id>` then `section`. Duplicate bases get a 6-hex content hash suffix. Slugs are
-deterministic and order-independent; source and clone share a slug only when they describe
-the same content.
+`sectionSlugs` builds a base from the heading, else text, then uses a 10-hex hash of structural
+identity when bases collide; identity includes id, tag, role, selector, classes, heading, and
+text. Empty-content records fall back to `id-<id>` or `section`. Exact duplicate siblings get
+an occurrence suffix and remain ambiguous; their suffixes are stable for a fixed DOM order, not
+order-independent. A slug is an artifact name, not proof that source and clone regions match.
 
 ### 7.2 Matching
 
-`matchSections` pairs each source region in this order:
+`matchSections` pairs source regions conservatively:
 
-1. exact normalized `text` → `matchedBy: "text"`;
-2. exact `id` → `"id"`;
-3. exact `heading` → `"heading"`;
-4. same index if unused → `"index"` (always `status: "review"`);
-5. otherwise `"missing"` → gate failure.
+1. a unique source `id` with one unused clone `id` → `"id"`;
+2. a unique normalized source text with one unused clone text → `"text"`;
+3. a unique source heading with one unused clone heading → `"heading"`;
+4. repeated or competing candidates → `"ambiguous"` when a positional slot exists, with candidate indexes and review confidence;
+5. otherwise, an unused same-index fallback → `"index"` (review only), or `"missing"` (failure).
 
-Unpaired clone regions are reported as `extra`; they are never silently dropped.
+A duplicate source text is treated as ambiguous rather than greedily paired. Unpaired clone
+regions are reported as `extra`; they are never silently dropped. Only text/id/heading matches
+with valid measured comparisons can pass geometry.
 
 ### 7.3 Measurement
 
@@ -309,8 +334,13 @@ geometry `xy: 1px`, `size: 2px`; section size tolerance `2px`.
 | Section | ratio ≤ `pass`, no dimension mismatch | ratio ≤ `review`, or size mismatch ≤ 2px | ratio > `review`, missing crop, size delta > 2px |
 | Geometry | text/id/heading match, deltas within tolerance, no style mismatch | any delta beyond tolerance, style mismatch, or positional-only match | missing region |
 
-`summarizeGate` is conservative: any `fail` wins, then any `review`, else `pass`. The machine
-gate is the worst of the three, and is `fail` when the visual report is empty.
+`summarizeGate` is conservative: empty or invalid status collections fail, then any `fail` wins,
+then any `review`, else `pass`. Required viewport coverage must be complete and unique for the
+full-page, region, and geometry reports; missing, duplicate, extra, malformed, or unsupported
+evidence fails closed. Zero-region coverage passes only when the source manifest explicitly
+records `regionExpectation: "documented-none"` (set by `--no-regions-expected`) and the empty
+region report agrees. The machine gate is the worst of the three and fails when there are no
+source viewports.
 
 Exit codes from `verify`: `0` pass, `1` fail, `2` review. `--allow-review` maps review to `0`
 for pipelines that only want hard failures. Other commands exit `0` on success and `1` on a
@@ -325,7 +355,7 @@ than gate them.
 | Section visual `fail` | FIX | assets if the crop is missing, else visual |
 | Geometry review, positional-only match | RECHECK | identity |
 | Geometry review, text/id/heading match | FIX | foundation if a foundation key mismatches, else geometry |
-| No section screenshot available | RECHECK | visual |
+| No section screenshot evidence available | FIX | assets |
 | Section visual `review` | RECHECK | visual |
 | Otherwise | KEEP | none |
 | KEEP, but `foundationChanged` and it was KEEP last round | RECHECK | foundation |
@@ -343,7 +373,7 @@ promotes previously passing regions to RECHECK so "it passed last round" is neve
 - **Unit tests** (`tests/unit.test.mjs`): pure logic — arg parsing, viewport resolution and
   validation, slugs, matching, comparisons, bands, geometry confidence, gate summarization,
   exit codes, triage rules and foundation promotion, tokens, crops, PNG diffs, manifest
-  checksums and tamper detection, report fail-closed behavior. No browser, no network.
+  checksums, unsafe paths/symlinks, route-aware responsive tokens, and report fail-closed behavior. No browser, no network.
 - **Fixture** (`tests/fixture-test.mjs` + `tests/fixture.html`): one controlled page served
   from an ephemeral loopback port. It walks numbered scenarios: four-viewport capture and
   manifest, integrity check, tokens and offline extraction, state capture, missing-clone

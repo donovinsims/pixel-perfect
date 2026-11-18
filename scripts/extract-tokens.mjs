@@ -12,7 +12,13 @@ try {
   const views = viewportsFromManifest(manifest);
   const observations = {};
   for (const view of views) {
-    observations[view.name] = await readJson(join(source, "evidence", `observation-${view.name}.json`));
+    const observation = await readJson(join(source, "evidence", `observation-${view.name}.json`));
+    observations[view.name] = {
+      ...observation,
+      routeId: view.routeId ?? observation.routeId ?? null,
+      routePath: view.routePath ?? observation.routePath ?? null,
+      viewportName: view.viewportName ?? observation.viewportName ?? view.name,
+    };
   }
   const tokens = extractTokens(observations);
   const out = absolute(String(args.out || join(source, "verification", "tokens")));
