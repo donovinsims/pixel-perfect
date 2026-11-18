@@ -2,6 +2,7 @@
 import { join } from "node:path";
 import { absolute, loadBrowser, parseArgs, publicSourceUrl, readJsonIfExists, requireOption, resolveViewports, stablePage, settle, writeJson } from "../lib/core.mjs";
 import { archiveBaseline, buildManifest, writeManifest } from "../lib/evidence.mjs";
+import { buildEvidenceBinding, recordProjectStatus } from "../lib/lifecycle.mjs";
 import { INTERACTIVE_SELECTOR, snapshotInteractiveState } from "../lib/observe.mjs";
 
 const STATE_KEYS = ["color", "background", "backgroundImage", "border", "borderRadius", "boxShadow", "opacity", "transform", "transition", "outline", "filter"];
@@ -83,6 +84,13 @@ try {
         captureProfile: priorManifest.captureProfile ?? null,
       });
       await writeManifest(out, refreshed);
+      await recordProjectStatus({
+        sourceDir: out,
+        status: "IN_PROGRESS",
+        reason: "interaction states refreshed",
+        binding: buildEvidenceBinding({ manifest: refreshed }),
+        sourceUrl: priorManifest.sourceUrl,
+      });
       console.log(`Frozen baseline refreshed safely; prior version archived under ${join(out, "baseline-history")}`);
     }
   } finally {

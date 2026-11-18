@@ -1,9 +1,10 @@
 #!/usr/bin/env node
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { absolute, parseArgs, readJson, readJsonIfExists, requireOption, writeJson } from "../lib/core.mjs";
 import { readManifest, verifyArtifacts } from "../lib/evidence.mjs";
-import { exitCodeFor, finalizeVerdict, renderFinalVerdictMarkdown } from "../lib/verdict.mjs";
-import { writeFile } from "node:fs/promises";
+import { buildEvidenceBinding, recordProjectStatus, statusFromVerdict } from "../lib/lifecycle.mjs";
+import { finalizeVerdict, renderFinalVerdictMarkdown } from "../lib/verdict.mjs";
 
 try {
   const args = parseArgs(process.argv.slice(2));
@@ -14,10 +15,22 @@ try {
   const integrity = await verifyArtifacts(source, manifest);
   const reviewPath = absolute(String(args.review || join(verification, "manual-review.json")));
   const review = await readJsonIfExists(reviewPath) ?? {};
-  const verdict = finalizeVerdict({ report, review, integrity, manifest });
+  const binding = buildEvidenceBinding({ manifest, manifestSha256: integrity.manifestIntegrity?.sha256 ?? null, report });
+  const verdict = finalizeVerdict({ report, review, integrity, manifest, binding });
   await writeJson(join(verification, "final-verdict.json"), verdict);
   await writeFile(join(verification, "final-verdict.md"), renderFinalVerdictMarkdown(verdict));
+  const state = await recordProjectStatus({
+    sourceDir: source,
+    status: statusFromVerdict(verdict.status),
+    reason: `finalize: ${verdict.status}`,
+    binding: verdict.binding ?? binding,
+    sourceUrl: manifest.sourceUrl,
+    cloneUrl: report?.cloneUrl ?? null,
+    verdictStatus: verdict.status,
+  });
   console.log(`${verdict.status}: ${verdict.conclusion}`);
+  console.log(`Project status: ${state.status}`);
+  console.log(`Evidence binding: ${binding.fingerprint}`);
   const unresolved = Object.entries(verdict.manualGates).filter(([, status]) => status === "pending").map(([gate]) => gate);
   if (unresolved.length) console.log(`Unresolved manual gates: ${unresolved.join("; ")}`);
   if (!integrity.ok) console.log(`Evidence integrity: ${integrity.message}`);

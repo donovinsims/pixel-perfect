@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { captureTarget, writeSourceBundle } from "../lib/capture.mjs";
 import { absolute, captureProfileFrom, parseArgs, publicSourceUrl, readJson, requireOption, resolveViewports } from "../lib/core.mjs";
 import { archiveBaseline } from "../lib/evidence.mjs";
+import { buildEvidenceBinding, recordProjectStatus } from "../lib/lifecycle.mjs";
 
 try {
   const args = parseArgs(process.argv.slice(2));
@@ -73,6 +74,14 @@ try {
   }
   const capture = await captureTarget({ url: sourceUrl, views, captureHtml: true, profile });
   const { manifest, summaries } = await writeSourceBundle({ out, capture, sourceUrl, noRegionsExpected: Boolean(args["no-regions-expected"]) });
+  // A new baseline invalidates any earlier delivery decision.
+  await recordProjectStatus({
+    sourceDir: out,
+    status: "IN_PROGRESS",
+    reason: "source baseline captured",
+    binding: buildEvidenceBinding({ manifest }),
+    sourceUrl,
+  });
   console.log(`Captured ${summaries.length} responsive source views in ${out}`);
   for (const summary of summaries) {
     console.log(`  ${summary.routeId ? `${summary.routeId} ` : ""}${summary.name} ${summary.viewport.width}x${summary.viewport.height}: ${summary.sections} regions, ${summary.cropped} cropped${summary.captureStatus === "failed" ? " (capture failed)" : ""}`);
