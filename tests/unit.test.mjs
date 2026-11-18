@@ -884,7 +884,9 @@ test("handoff package is evidence-derived, sanitised, and reflects the final ver
     const png = pngBuffer(20, 20, [12, 24, 36]);
     const rect = { x: 0, y: 0, width: 10, height: 10 };
     const hostile = '<script>alert("captured")</script><img src=x onerror="alert(1)">';
-    const observed = observation([section({ text: `Hero ${hostile}`, rect, documentRect: rect })], {
+    const sourceSections = [section({ text: `Hero ${hostile}`, rect, documentRect: rect })];
+    const [regionSlug] = sectionSlugs(sourceSections);
+    const observed = observation(sourceSections, {
       title: `Captured ${hostile}`,
       page: { viewport: { width: 1440, height: 1000 }, scrollWidth: 20, scrollHeight: 20, backgroundColor: "rgb(248, 250, 252)" },
     });
@@ -893,13 +895,13 @@ test("handoff package is evidence-derived, sanitised, and reflects the final ver
     await mkdir(join(root, "source", "sections", "desktop"), { recursive: true });
     await mkdir(join(root, "evidence"), { recursive: true });
     await writeFile(join(root, "source", "screenshots", "desktop.png"), png);
-    await writeFile(join(root, "source", "sections", "desktop", "hero.png"), crop);
+    await writeFile(join(root, "source", "sections", "desktop", `${regionSlug}.png`), crop);
     await writeFile(join(root, "evidence", "observation-desktop.json"), JSON.stringify(observed));
     await writeFile(join(root, "evidence", "sections-desktop.json"), JSON.stringify({
       viewport: "desktop",
       viewportSize: { width: 1440, height: 1000 },
       regionExpectation: "required",
-      sections: [{ index: 0, slug: "hero", selector: "section.hero", role: "main", text: `Hero ${hostile}`, rect, documentRect: rect, bytes: crop.byteLength, captureStatus: "captured" }],
+      sections: [{ index: 0, slug: regionSlug, selector: "section.hero", role: "main", text: `Hero ${hostile}`, rect, documentRect: rect, bytes: crop.byteLength, captureStatus: "captured" }],
     }));
     const manifest = await buildManifest({
       out: root,
