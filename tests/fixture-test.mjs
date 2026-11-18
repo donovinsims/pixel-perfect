@@ -48,7 +48,9 @@ const server = createServer((request, response) => {
     body = body.replace("</body>", '<style>:root{--snapshot-private:url("https://user:pass@example.invalid/asset?access_token=style-secret#fragment")}</style><script type="application/json">{"marker":"snapshot-script-secret"}</script><form style="display:none"><input type="password" value="snapshot-form-secret"></form><a style="display:none" href="/private?access_token=snapshot-url-secret#private">private link</a></body>');
   }
   if (requestUrl.pathname === "/state-css") {
-    body = body.replace(".cta{position:relative;", `.cta{background-image:url("http://user:pass@127.0.0.1:${server.address().port}/state-pixel?state_token=state-secret#fragment");position:relative;`);
+    // Append the rule after the existing stylesheet: the .cta rule sets the
+    // `background` shorthand, which would reset an earlier background-image.
+    body = body.replace("</style>", `.cta{background-image:url("http://user:pass@127.0.0.1:${server.address().port}/state-pixel?state_token=state-secret#fragment")}</style>`);
   }
   response.setHeader("Content-Type", "text/html; charset=utf-8");
   response.end(body);
