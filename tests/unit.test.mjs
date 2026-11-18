@@ -18,7 +18,7 @@ import {
   viewportsFromManifest,
 } from "../lib/core.mjs";
 import { clampRect, cropPng } from "../lib/crops.mjs";
-import { archiveBaseline, buildManifest, verifyArtifacts, writeManifest } from "../lib/evidence.mjs";
+import { archiveBaseline, buildManifest, readManifest, verifyArtifacts, writeManifest } from "../lib/evidence.mjs";
 import { buildDesignSystem, renderDesignSystemMarkdown, renderDesignTokensCss } from "../lib/design-system.mjs";
 import { normalizeRouteUrl } from "../lib/discover.mjs";
 import {
@@ -269,7 +269,21 @@ test("gates summarize conservatively and map to exit codes", () => {
   assert.equal(exitCodeFor("review", { allowReview: true }), 0);
 });
 
-const triageInput = ({ cloneSections = [section({ index: 0 })], visual = { hero: { changeRatio: 0, dimensionMismatch: false, missing: false } }, previous = null, cloneOverrides = {} } = {}) => {
+/**
+ * A section visual result must carry the measured source and clone dimensions:
+ * classification fails closed without them, so fixtures cannot omit them and
+ * accidentally assert a failure as if it were a classification.
+ */
+const sectionVisual = (overrides = {}) => ({
+  changeRatio: 0,
+  dimensionMismatch: false,
+  missing: false,
+  source: { width: 960, height: 400 },
+  clone: { width: 960, height: 400 },
+  ...overrides,
+});
+
+const triageInput = ({ cloneSections = [section({ index: 0 })], visual = { hero: sectionVisual() }, previous = null, cloneOverrides = {} } = {}) => {
   const sourceObservation = observation([section({ index: 0, text: "Hero" })]);
   const cloneObservation = observation(cloneSections, cloneOverrides);
   const comparisons = compareObservations(sourceObservation, cloneObservation).comparisons;
@@ -347,7 +361,7 @@ test("a changed foundation promotes previous KEEP regions to RECHECK", () => {
       sourceObservation,
       cloneObservation,
       comparisons: compareObservations(sourceObservation, cloneObservation).comparisons,
-      sectionVisual: { hero: { changeRatio: 0, dimensionMismatch: false, missing: false } },
+      sectionVisual: { hero: sectionVisual() },
     }],
     sourceUrl: "https://example.com",
     cloneUrl: "http://localhost:3000",
@@ -506,6 +520,65 @@ test("manifests checksum evidence and detect tampering", async () => {
     assert.equal(alteredManifest.manifestIntegrity.ok, false);
 
     assert.equal((await verifyArtifacts(root, { artifacts: [] })).ok, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("manifest metadata files are skipped, never reported invalid, and symlinked metadata still fails", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pixel-perfect-manifest-"));
+  try {
+    await mkdir(join(root, "source", "screenshots"), { recursive: true });
+    await mkdir(join(root, "evidence"), { recursive: true });
+    await writeFile(join(root, "source", "screenshots", "desktop.png"), "image-bytes");
+    await writeFile(join(root, "evidence", "observation-desktop.json"), "{\"sections\":[]}");
+    await writeFile(join(root, "evidence", "sections-desktop.json"), "{\"sections\":[]}");
+    const manifest = await buildManifest({ out: root, sourceUrl: "https://example.com", viewports: [{ name: "desktop", viewport: { width: 1440, height: 1000 }, sections: 0, regionExpectation: "documented-none" }] });
+    await writeManifest(root, manifest);
+
+    // The written manifest and its checksum are intentional bundle metadata:
+    // they must not be hashed as artifacts nor reported as invalid entries.
+    assert.ok(manifest.artifacts.every((artifact) => artifact.path !== "evidence/manifest.json" && artifact.path !== "evidence/manifest.sha256"));
+    const clean = await verifyArtifacts(root, manifest);
+    assert.equal(clean.ok, true);
+    assert.equal(clean.manifestIntegrity.ok, true);
+    assert.deepEqual(clean.invalid, []);
+    assert.deepEqual(clean.unexpected, []);
+    assert.deepEqual(clean.missing, []);
+    assert.deepEqual(clean.mismatched, []);
+
+    const manifestBytes = await readFile(join(root, "evidence", "manifest.json"));
+    const checksumBytes = await readFile(join(root, "evidence", "manifest.sha256"));
+    const outside = join(root, "outside");
+    await mkdir(outside, { recursive: true });
+    await writeFile(join(outside, "manifest.json"), manifestBytes);
+    await writeFile(join(outside, "manifest.sha256"), checksumBytes);
+
+    await rm(join(root, "evidence", "manifest.json"));
+    await symlink(join(outside, "manifest.json"), join(root, "evidence", "manifest.json"));
+    const linkedManifest = await verifyArtifacts(root, manifest);
+    assert.equal(linkedManifest.ok, false);
+    assert.ok(linkedManifest.invalid.includes("evidence/manifest.json"));
+    await assert.rejects(() => readManifest(root), /Unsafe evidence/);
+    await rm(join(root, "evidence", "manifest.json"));
+    await writeFile(join(root, "evidence", "manifest.json"), manifestBytes);
+
+    await rm(join(root, "evidence", "manifest.sha256"));
+    await symlink(join(outside, "manifest.sha256"), join(root, "evidence", "manifest.sha256"));
+    const linkedChecksum = await verifyArtifacts(root, manifest);
+    assert.equal(linkedChecksum.ok, false);
+    assert.ok(linkedChecksum.invalid.includes("evidence/manifest.sha256"));
+    await rm(join(root, "evidence", "manifest.sha256"));
+    await writeFile(join(root, "evidence", "manifest.sha256"), checksumBytes);
+    assert.equal((await verifyArtifacts(root, manifest)).ok, true);
+
+    // Ordinary bundle entries are unaffected: a real symlink is still unsafe.
+    await writeFile(join(root, "outside.png"), "outside");
+    await symlink(join(root, "outside.png"), join(root, "source", "screenshots", "linked.png"));
+    const linkedArtifact = await verifyArtifacts(root, manifest);
+    assert.equal(linkedArtifact.ok, false);
+    assert.ok(linkedArtifact.invalid.includes("source/screenshots/linked.png"));
+    await assert.rejects(() => buildManifest({ out: root, sourceUrl: "https://example.com", viewports: [] }), /Unsafe evidence bundle entries/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
