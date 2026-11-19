@@ -67,6 +67,7 @@ A verified clone must pass structure, content and assets, geometry and style, sc
 9. Verify at 1440, 768, and 390 widths, plus 1024 when observed behavior changes there.
 10. Correct the highest-impact measured drift for at most five focused rounds. Read `verification/triage.md` and work the correction plan in priority order (structural, foundation, geometry, assets, visual, identity). Preserve KEEP regions and record blockers instead of guessing.
 11. Export measured system guidance with `export-design` when useful, rerun regression, and close the human gates explicitly with `finalize`.
+12. Generate the delivery package with `handoff --source .clone` and open `handoff/index.html`. Confirm the recorded status with `status --source .clone`; keep `handoff/evidence/` as raw output and treat the reader documents as the deliverable.
 
 ## Commands
 
@@ -84,6 +85,8 @@ pixel-perfect-clone export-design --source .clone
 pixel-perfect-clone triage --source .clone
 pixel-perfect-clone evidence-check --source .clone
 pixel-perfect-clone finalize --source .clone
+pixel-perfect-clone handoff --source .clone
+pixel-perfect-clone status --source .clone
 ```
 
 `capture-source` also writes per-region crops, `evidence/tokens.json`, `evidence/tokens.md`, and a checksummed manifest. A prior frozen bundle is archived under `baseline-history/` before source recapture or state refresh. `verify` writes the fidelity report and mechanized KEEP / FIX / RECHECK triage; `triage` recomputes that classification without recapturing. Add `--viewports desktop,tablet,mobile,1024` when behavior changes at an uncaptured width. Repeated screenshot samples report visible rendering instability; those warnings require review and are not silently normalized.
@@ -130,7 +133,7 @@ These are triage bands, not the final verdict. A clone is **Verified** only when
 - a micro-detail review finds no unresolved structural or compositing error;
 - correction regression protects previously passing regions.
 
-The machine report is not a final verdict. Run `finalize --source .clone` after human review; it rechecks the frozen evidence and reads `verification/manual-review.json` (copy the starting form from `templates/manual-review.json`). Pending gates remain unresolved. `not_applicable` needs a gate reason and a documented limitation. Record blockers and reusable lessons in `.clone/lessons.md`.
+The machine report is not a final verdict. Run `finalize --source .clone` after human review; it rechecks the frozen evidence and reads `verification/manual-review.json` (copy the starting form from `templates/manual-review.json`). Pending gates remain unresolved. `not_applicable` needs a gate reason and a documented limitation. Record blockers and reusable lessons in `.clone/lessons.md`. Then generate the reader-facing package with `handoff --source .clone`: its documents restate the recorded verdict, `handoff/index.html` is an offline dashboard, and `handoff/evidence/` keeps machine output separate from the deliverable.
 
 ## Reference map
 
@@ -158,5 +161,6 @@ Read the reference that owns the current phase:
 - [ ] `verify` exited 0 for a claimed-finished clone, not 1 or 2.
 - [ ] Screenshot numbers and human visual judgment agree.
 - [ ] The final verdict was produced by `finalize`, names evidence and remaining blockers, and records regression status.
+- [ ] `handoff` was regenerated after the verdict, its dashboard loads offline, and `status --source .clone` still reports that verdict.
 - [ ] Discovery scope and route/depth truncation are understood; query-dependent variants are acknowledged as collapsed.
 

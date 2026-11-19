@@ -1,12 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { PNG } from "pngjs";
 import {
   DEFAULT_CAPTURE_PROFILE,
   DEFAULT_THRESHOLDS,
+  MANUAL_GATES,
   captureProfileFrom,
   captureProfileFromManifest,
   parseArgs,
@@ -40,6 +42,8 @@ import {
 } from "../lib/verdict.mjs";
 import { diffPng } from "../lib/visual.mjs";
 import { verifyClone } from "../lib/verify.mjs";
+import { HANDOFF_DOCUMENTS, generateHandoff } from "../lib/handoff.mjs";
+import { buildEvidenceBinding, readProjectState, recordProjectStatus, resolveDeliveryStatus, statusFromVerdict } from "../lib/lifecycle.mjs";
 import { snapshotInteractiveState, trackAssets } from "../lib/observe.mjs";
 
 const BASE_STYLE = {
@@ -737,6 +741,18 @@ test("final verdict requires current complete machine evidence and documented ma
   assert.equal(finalizeVerdict({ report, integrity, manifest: { ...manifest, capturedAt: "2026-02-01T00:00:00.000Z" }, review: { gates } }).status, "blocked");
   assert.equal(finalizeVerdict({ report, integrity: { ok: false, message: "tampered" }, manifest, review: { gates } }).status, "blocked");
   assert.equal(finalizeVerdict({ report: makeReport(0.5), integrity, manifest, review: { gates } }).status, "failed");
+  const staleReview = finalizeVerdict({
+    report, integrity, manifest,
+    binding: { fingerprint: "current-evidence" },
+    review: { gates, binding: { fingerprint: "older-evidence" } },
+  });
+  assert.equal(staleReview.status, "blocked");
+  assert.match(staleReview.conclusion, /bound to different evidence/);
+  assert.equal(finalizeVerdict({
+    report, integrity, manifest,
+    binding: { fingerprint: "current-evidence" },
+    review: { gates, binding: { fingerprint: "current-evidence" } },
+  }).status, "fully_verified");
 });
 
 test("discovery URL normalization keeps scope narrow and collapses query and fragments", () => {
@@ -829,4 +845,119 @@ test("core exports the documented defaults", () => {
   assert.equal(DEFAULT_THRESHOLDS.visual.pass, 0.005);
   assert.equal(DEFAULT_THRESHOLDS.visual.review, 0.02);
   assert.deepEqual(DEFAULT_THRESHOLDS.geometry, { xy: 1, size: 2 });
+});
+
+test("project lifecycle persists statuses and demotes a stale finalization", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pixel-perfect-state-"));
+  try {
+    const first = await recordProjectStatus({ sourceDir: root, status: "IN_PROGRESS", reason: "capture", binding: { fingerprint: "a", baselineSha256: "x" } });
+    assert.equal(first.status, "IN_PROGRESS");
+    assert.equal(first.history.length, 1);
+    const second = await recordProjectStatus({ sourceDir: root, status: "VERIFIED", reason: "finalize", binding: { fingerprint: "a", baselineSha256: "x" } });
+    assert.equal(second.history.length, 2);
+
+    // A fresh read stands in for a new process: the status lives on disk.
+    const restored = await readProjectState(root);
+    assert.equal(restored.status, "VERIFIED");
+    assert.equal(restored.history.length, 2);
+    assert.equal(restored.history[1].reason, "finalize");
+    assert.equal(resolveDeliveryStatus({ state: restored, currentFingerprint: "a" }).status, "VERIFIED");
+
+    const stale = resolveDeliveryStatus({ state: restored, currentFingerprint: "b" });
+    assert.equal(stale.status, "AWAITING_REVIEW");
+    assert.equal(stale.recordedStatus, "VERIFIED");
+    assert.equal(stale.stale, true);
+    assert.match(stale.note, /changed after the last finalization/);
+
+    await assert.rejects(() => recordProjectStatus({ sourceDir: root, status: "DONE" }), /Unsupported project status/);
+    assert.equal(statusFromVerdict("ready_with_limitations"), "READY_WITH_LIMITATIONS");
+    assert.equal(statusFromVerdict("blocked"), "BLOCKED");
+    assert.equal(statusFromVerdict(undefined), "IN_PROGRESS");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("handoff package is evidence-derived, sanitised, and reflects the final verdict", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pixel-perfect-handoff-"));
+  try {
+    const png = pngBuffer(20, 20, [12, 24, 36]);
+    const rect = { x: 0, y: 0, width: 10, height: 10 };
+    const hostile = '<script>alert("captured")</script><img src=x onerror="alert(1)">';
+    const sourceSections = [section({ text: `Hero ${hostile}`, rect, documentRect: rect })];
+    const [regionSlug] = sectionSlugs(sourceSections);
+    const observed = observation(sourceSections, {
+      title: `Captured ${hostile}`,
+      page: { viewport: { width: 1440, height: 1000 }, scrollWidth: 20, scrollHeight: 20, backgroundColor: "rgb(248, 250, 252)" },
+    });
+    const crop = cropPng(png, rect);
+    await mkdir(join(root, "source", "screenshots"), { recursive: true });
+    await mkdir(join(root, "source", "sections", "desktop"), { recursive: true });
+    await mkdir(join(root, "evidence"), { recursive: true });
+    await writeFile(join(root, "source", "screenshots", "desktop.png"), png);
+    await writeFile(join(root, "source", "sections", "desktop", `${regionSlug}.png`), crop);
+    await writeFile(join(root, "evidence", "observation-desktop.json"), JSON.stringify(observed));
+    await writeFile(join(root, "evidence", "sections-desktop.json"), JSON.stringify({
+      viewport: "desktop",
+      viewportSize: { width: 1440, height: 1000 },
+      regionExpectation: "required",
+      sections: [{ index: 0, slug: regionSlug, selector: "section.hero", role: "main", text: `Hero ${hostile}`, rect, documentRect: rect, bytes: crop.byteLength, captureStatus: "captured" }],
+    }));
+    const manifest = await buildManifest({
+      out: root,
+      sourceUrl: "https://example.com",
+      viewports: [{ name: "desktop", viewport: { width: 1440, height: 1000 }, sections: 1, regionExpectation: "required", captureStatus: "captured" }],
+    });
+    await writeManifest(root, manifest);
+
+    const capture = async () => ({
+      pages: [{ name: "desktop", viewport: { width: 1440, height: 1000 }, screenshot: png, observation: observed, html: null }],
+      assets: [],
+      warnings: [],
+    });
+    const { report } = await verifyClone({ sourceDir: root, cloneUrl: "http://localhost:3000", capture });
+    assert.equal(report.machineGate, "pass");
+
+    const storedManifest = await readManifest(root);
+    const integrity = await verifyArtifacts(root, storedManifest);
+    const binding = buildEvidenceBinding({ manifest: storedManifest, manifestSha256: integrity.manifestIntegrity?.sha256 ?? null, report });
+    const gates = Object.fromEntries(MANUAL_GATES.map((gate) => [gate, "pass"]));
+    const verdict = finalizeVerdict({ report, integrity, manifest: storedManifest, binding, review: { gates } });
+    assert.equal(verdict.status, "fully_verified");
+    await writeFile(join(root, "verification", "final-verdict.json"), JSON.stringify(verdict));
+    await recordProjectStatus({
+      sourceDir: root,
+      status: statusFromVerdict(verdict.status),
+      reason: "unit finalize",
+      binding,
+      sourceUrl: storedManifest.sourceUrl,
+      cloneUrl: report.cloneUrl,
+      verdictStatus: verdict.status,
+    });
+
+    const result = await generateHandoff({ sourceDir: root });
+    assert.equal(result.status, "VERIFIED");
+    for (const doc of HANDOFF_DOCUMENTS) {
+      assert.ok((await readFile(join(result.out, doc.file), "utf8")).length > 0, `${doc.file} was not written`);
+    }
+    assert.ok(existsSync(join(result.out, "index.html")));
+    assert.ok(existsSync(join(result.out, "tokens.css")));
+    assert.ok(result.screenshots >= 3);
+
+    const html = await readFile(join(result.out, "index.html"), "utf8");
+    assert.match(html, /&lt;script&gt;/);
+    assert.doesNotMatch(html, /<script>alert/);
+    assert.doesNotMatch(html, /onerror="/i);
+    assert.doesNotMatch(html, /javascript:/i);
+    assert.equal((html.match(/<\/script>/g) ?? []).length, 2);
+    for (const [, reference] of html.matchAll(/(?:href|src)="([^"]+)"/g)) {
+      if (/^(https?:|#)/.test(reference)) continue;
+      const target = resolve(result.out, decodeURIComponent(reference.split("#")[0]));
+      assert.ok(existsSync(target), `dashboard reference does not resolve: ${reference}`);
+    }
+    assert.match(await readFile(join(result.out, "COMPLETION-REPORT.md"), "utf8"), /VERIFIED/);
+    assert.match(await readFile(join(result.out, "START-HERE.md"), "utf8"), /Delivery status: VERIFIED/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

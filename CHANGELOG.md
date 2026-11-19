@@ -11,6 +11,9 @@ The toolkit now has bounded public-route discovery, route-aware capture, reusabl
 - `export-design` produces reusable design-system JSON, Markdown, and CSS from measured observations.
 - `finalize` combines frozen-evidence integrity, machine results, and explicit manual-review gates into a final verdict.
 - Baseline refreshes archive the prior source/evidence bundle; evidence checks report missing, changed, unexpected, unsafe, symlinked, and manifest-checksum failures.
+- `handoff` writes a reader-facing delivery package — start-here, completion report, rebuild guide, limitations, site map, page blueprints, interactions, design guide, components, responsive rules, measured tokens, organised screenshots — with a static dashboard that compares original and reconstructed captures offline.
+- `status` reports the persisted delivery lifecycle (`IN_PROGRESS`, `AWAITING_REVIEW`, `VERIFIED`, `READY_WITH_LIMITATIONS`, `BLOCKED`, `FAILED`) with an evidence binding covering baseline, routes, viewports, regions, and verification round; finalized statuses are demoted when that evidence changes.
+- Finalization rejects a human review bound to different evidence, and the handoff package restates the authoritative recorded verdict.
 
 ### Fixed
 

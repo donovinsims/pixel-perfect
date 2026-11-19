@@ -112,6 +112,9 @@ verify ──► capture clone once ──► full-page/section/geometry gates
                           ▼
                  export-design (optional) → measured docs and CSS tokens
                  finalize → integrity + explicit human gates + final verdict
+                          │
+                          ▼
+                 handoff → reader documents, screenshots, offline dashboard
 ```
 
 Two re-entry points exist so you do not recapture unnecessarily:
@@ -135,7 +138,7 @@ Two re-entry points exist so you do not recapture unnecessarily:
 | `scripts/compare-geometry.mjs` | Offline or URL geometry comparison | Geometry-only workflows |
 | `scripts/extract-tokens.mjs` | Regenerate tokens from an existing bundle | Token output location/behavior |
 | `scripts/evidence-check.mjs` | Manifest verification CLI (JSON verdict) | Integrity reporting |
-| `scripts/discover.mjs`, `scripts/export-design.mjs`, `scripts/finalize.mjs` | Discovery, design export, and final-verdict CLIs | Route scope, export schema, or human gates |
+| `scripts/discover.mjs`, `scripts/export-design.mjs`, `scripts/finalize.mjs`, `scripts/handoff.mjs`, `scripts/status.mjs` | Discovery, design export, final-verdict, delivery-handoff, and lifecycle-status CLIs | Route scope, export schema, human gates, package contents |
 | `scripts/run-dembrandt.mjs` | Optional Dembrandt cross-check | Redaction or availability handling |
 | `lib/core.mjs` | Constants (`TOOL_VERSION`, `MANIFEST_VERSION`, `VIEWPORTS`, `DEFAULT_THRESHOLDS`), arg parsing, viewport resolution, thresholds, fs/JSON/hash helpers, browser launch, `settle` | Shared primitives only; keep it dependency-light |
 | `lib/observe.mjs` | The single in-page measurement function, `STYLE_KEYS`, interactive selector, asset tracking | What is measured |
@@ -148,6 +151,9 @@ Two re-entry points exist so you do not recapture unnecessarily:
 | `lib/evidence.mjs` | Manifest v3 build/verify, artifact hashing, safe baseline archives | Integrity rules |
 | `lib/discover.mjs` | Bounded, scoped route discovery and sitemap/robots processing | Discovery limits and route contracts |
 | `lib/design-system.mjs` | Reusable system aggregation and JSON/Markdown/CSS rendering | Export schema and inferred roles |
+| `lib/handoff.mjs` | Reader package assembly from frozen evidence and the recorded verdict | Document contents and evidence mapping |
+| `lib/dashboard.mjs` | Static, offline dashboard rendering with escaped captured content | Dashboard layout and sanitization |
+| `lib/lifecycle.mjs` | Persistent project status, evidence binding, and finalization history | Delivery status semantics |
 | `lib/verify.mjs` | Orchestrates a verification round | Round sequencing |
 | `tests/unit.test.mjs` | Pure logic tests (no browser) | Every pure behavior change |
 | `tests/fixture-test.mjs` | Real-browser end-to-end fixture | Browser-coupled changes |
@@ -191,7 +197,7 @@ and map thrown errors to `process.exitCode = 1`. Put logic in `lib/`, not in a s
     └── final-verdict.json / final-verdict.md
 ```
 
-`verification/tokens/` appears when `extract-tokens` is run with its default output path. Discovery and design-system exports are outside the frozen evidence bundle.
+`verification/tokens/` appears when `extract-tokens` is run with its default output path. Discovery and design-system exports are outside the frozen evidence bundle. `project-state.json` at the bundle root records the delivery lifecycle, and `handoff/` holds the reader-facing package (documents, measured tokens, screenshot set, dashboard, and a copy of the raw evidence).
 
 ### 6.2 `evidence/manifest.json` (version 3)
 
@@ -270,7 +276,9 @@ Causes and priorities: `structural` 1, `foundation` 2, `geometry` 3, `assets` 4,
 The machine conclusion distinguishes failed evidence, unresolved review-band results, and
 machine checks passed with human review still required. `finalStatus` is only `failed` or
 `manual_review_required` here; the report cannot declare final verification. `finalize` writes a
-separate verdict after integrity is rechecked and explicit human gates are supplied.
+separate verdict after integrity is rechecked and explicit human gates are supplied. `handoff` then
+renders that verdict into the delivery package, and `status` prints the persisted status together
+with the evidence binding it covers.
 
 ### 6.7 `tokens.json`
 

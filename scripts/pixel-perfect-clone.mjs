@@ -29,6 +29,8 @@ const usage = [
   "  extract-tokens --source .clone [--out DIR]",
   "  export-design --source .clone [--out DIR]",
   "  finalize --source .clone [--review verification/manual-review.json]",
+  "  handoff --source .clone [--out handoff]",
+  "  status --source .clone",
   "  evidence-check --source .clone",
   "  visual-diff --source DIR --clone DIR --out DIR [--source-sections DIR --clone-sections DIR]",
   "  compare-geometry --source .clone (--clone DIR | --clone-url URL) --out FILE",
@@ -132,7 +134,7 @@ async function main() {
   else if (command === "verify") await import("./verify-clone.mjs");
   else if (command === "extract-tokens") await import("./extract-tokens.mjs");
   else if (command === "evidence-check") await import("./evidence-check.mjs");
-  else if (["discover", "export-design", "finalize"].includes(command)) await import(`./${command}.mjs`);
+  else if (["discover", "export-design", "finalize", "handoff", "status"].includes(command)) await import(`./${command}.mjs`);
   else if (command === "triage") {
     const source = String(args.source || ".clone");
     const { triage } = await triageEvidence({ sourceDir: resolve(process.cwd(), source) });

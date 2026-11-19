@@ -48,7 +48,9 @@ lib/*.mjs              all behavior; pure where possible, browser-bound only in
 | `verify` | `verify-clone.mjs` | `--source`, `--clone-url` | full `verification/` tree |
 | `extract-tokens` | `extract-tokens.mjs` | `--source` | `tokens.json`/`tokens.md` |
 | `export-design` | `export-design.mjs` → `lib/design-system.mjs` | `--source` | design-system JSON, Markdown, CSS |
-| `finalize` | `finalize.mjs` → `lib/verdict.mjs` | `--source` | final verdict JSON/Markdown |
+| `finalize` | `finalize.mjs` → `lib/verdict.mjs` | `--source` | final verdict JSON/Markdown, lifecycle status |
+| `handoff` | `handoff.mjs` → `lib/handoff.mjs` | `--source`, optional `--out` | reader documents, tokens, screenshots, `index.html` |
+| `status` | `status.mjs` → `lib/lifecycle.mjs` | `--source` | stdout JSON with the persisted delivery status |
 | `evidence-check` | `evidence-check.mjs` | `--source` | stdout JSON |
 | `triage` | inline → `lib/verify.mjs` | `--source` (default `.clone`) | `triage.json`/`triage.md` |
 | `help`, `--version` | inline | — | stdout |
@@ -191,6 +193,23 @@ computed-style parity, micro-detail audit, interactions, independent review, reg
 machine report sets `finalStatus` to `failed` or `manual_review_required`; `finalize` rechecks
 frozen integrity and returns `fully_verified`, `ready_with_limitations`,
 `manual_review_required`, `failed`, or `blocked` from explicit human gate input.
+
+### Delivery package and lifecycle
+
+`lib/lifecycle.mjs` persists `project-state.json` in the bundle root with exactly one of
+`IN_PROGRESS`, `AWAITING_REVIEW`, `VERIFIED`, `READY_WITH_LIMITATIONS`, `BLOCKED`, or `FAILED`,
+plus a bounded history. Every transition carries an evidence binding: a fingerprint of the
+source URL, capture time, manifest checksum, routes, viewports, region counts, and the
+verification round. `finalize` rejects a human review bound to different evidence, and `handoff`
+demotes a finalized status back to `AWAITING_REVIEW` when the current fingerprint no longer
+matches, so a stale decision is never presented as current.
+
+`lib/handoff.mjs` assembles the reader package from frozen evidence only: ten Markdown documents,
+`tokens.json` and `tokens.css`, original/reconstructed/difference screenshots with region crops,
+and `index.html`. `lib/dashboard.mjs` renders that page as static HTML with an embedded data
+blob, no network requests, and every captured string escaped; colours are applied to style
+attributes only when they match a conservative CSS colour pattern. Raw machine output is copied
+into `handoff/evidence/` so reader documents and machine evidence stay separate.
 
 ---
 

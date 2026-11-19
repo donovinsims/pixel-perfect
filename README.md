@@ -13,6 +13,8 @@ This checkout contains the v4.0 capability work, while package/tool version rema
 - **Repeatable capture profiles and stability evidence.** `--profile` configures Chromium context and settling options. Captures compare repeated rendered pixels and record instability warnings; profile keys are allowlisted so arbitrary profile data is never copied into the manifest.
 - **Reusable design-system export.** `export-design` writes JSON, Markdown, and CSS tokens from measured styles, typography, layout, component signatures, and responsive observations. Semantic roles are explicitly marked as inferred.
 - **Explicit final verdict.** `finalize` combines the latest machine report, frozen-evidence integrity, and human review from `templates/manual-review.json`; pending gates cannot be mistaken for a verified clone.
+- **Delivery handoff and dashboard.** `handoff` writes a reader-facing package — start-here, completion report, rebuild guide, known limitations, site map, page blueprints, interactions, design guide, components, responsive rules, measured tokens, and organised original/reconstructed/difference screenshots — plus a static dashboard that compares captures. Raw machine output stays in `handoff/evidence/`.
+- **Persistent completion lifecycle.** `status` reports the recorded delivery status (`IN_PROGRESS`, `AWAITING_REVIEW`, `VERIFIED`, `READY_WITH_LIMITATIONS`, `BLOCKED`, `FAILED`) from `project-state.json`, bound to a baseline and verification-round fingerprint. Evidence that changes after finalization demotes a finalized status instead of presenting it as current.
 - **Safer refresh and evidence checks.** Source recaptures and interaction-state refreshes archive the prior bundle under `baseline-history/`. Checks now include the manifest checksum, required and unexpected files, unsafe paths, and symlinks.
 
 The manifest remains version 3 with additive fields; existing v3 bundles without a manifest checksum remain readable. No dependency or tool-version bump is made by this unreleased change.
@@ -173,6 +175,15 @@ node scripts/pixel-perfect-clone.mjs finalize --source .clone
 
 `finalize` rechecks frozen evidence on every run. It exits `0` only for fully verified or ready-with-limitations, `2` while review is pending, and `1` when failed or blocked. `not_applicable` gates need a gate reason and a documented limitation.
 
+Generate the handoff package and open its dashboard:
+
+```bash
+node scripts/pixel-perfect-clone.mjs handoff --source .clone
+node scripts/pixel-perfect-clone.mjs status --source .clone
+```
+
+`handoff` writes `.clone/handoff/`: `START-HERE.md`, `COMPLETION-REPORT.md`, `REBUILD-GUIDE.md`, `KNOWN-LIMITATIONS.md`, `SITE-MAP.md`, `PAGE-BLUEPRINTS.md`, `INTERACTIONS.md`, `DESIGN-GUIDE.md`, `COMPONENTS.md`, `RESPONSIVE-RULES.md`, `tokens.json`, `tokens.css`, original/reconstructed/difference screenshots with region crops, and `index.html`. The dashboard is static and works from `file://` with no server or paid service; captured text is escaped before rendering and every link is relative to the package.
+
 ## Commands
 
 ```text
@@ -188,6 +199,8 @@ pixel-perfect-clone run-dembrandt --url URL [--out .clone]
 pixel-perfect-clone extract-tokens --source .clone [--out DIR]
 pixel-perfect-clone export-design --source .clone [--out DIR]
 pixel-perfect-clone finalize --source .clone [--review FILE]
+pixel-perfect-clone handoff --source .clone [--out DIR]
+pixel-perfect-clone status --source .clone
 pixel-perfect-clone evidence-check --source .clone
 pixel-perfect-clone visual-diff --source DIR --clone DIR --out DIR [--source-sections DIR --clone-sections DIR]
 pixel-perfect-clone compare-geometry --source .clone (--clone DIR | --clone-url URL) --out FILE
@@ -354,7 +367,7 @@ A clone is **Verified** only when all machine and manual gates pass:
 7. independent review when available;
 8. regression after corrections.
 
-If any required gate remains unresolved, the conclusion is **Not verified** and the report must name the blocker. A low changed-pixel ratio never overrides a visible error. The machine fidelity report never claims final verification: `finalize` returns `fully_verified`, `ready_with_limitations`, `manual_review_required`, `failed`, or `blocked` after rechecking frozen evidence and explicit human-gate input.
+If any required gate remains unresolved, the conclusion is **Not verified** and the report must name the blocker. A low changed-pixel ratio never overrides a visible error. The machine fidelity report never claims final verification: `finalize` returns `fully_verified`, `ready_with_limitations`, `manual_review_required`, `failed`, or `blocked` after rechecking frozen evidence and explicit human-gate input. `handoff` regenerates the package from that recorded verdict, so the delivered documents state the authoritative status — and a finalized status is demoted to `AWAITING_REVIEW` as soon as the baseline or verification round changes.
 
 ## Limitations
 

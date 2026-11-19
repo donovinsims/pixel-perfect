@@ -5,10 +5,12 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { MANUAL_GATES } from "../lib/core.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const fixture = await readFile(join(root, "tests", "fixture.html"), "utf8");
@@ -304,7 +306,122 @@ try {
   assert.deepEqual(tamperReport.mismatched, [artifact.path]);
   assert.equal(tamperReport.ok, false);
 
-  console.log("fixture: capture, tokens, states, section crops, missing-clone failure, drift triage, clean pass, regression, offline triage, and tamper detection all passed");
+  // 12. Complete delivery workflow: discover, capture, export-design, verify,
+  // final review, finalize, handoff, and a dashboard inspected in a browser.
+  const delivery = join(out, "delivery");
+  await expectCode("pixel-perfect-clone.mjs", ["discover", "--url", url, "--out", delivery, "--max-routes", "20", "--max-depth", "2"], 0);
+  const deliveryInventory = await readJson(join(delivery, "discovery", "routes.json"));
+  const deliverableRoutes = deliveryInventory.routes.filter((route) => route.discoveryStatus === "captured");
+  assert.ok(deliverableRoutes.length >= 2, `expected at least two capturable routes, found ${deliverableRoutes.length}`);
+  await writeFile(join(delivery, "routes-subset.json"), JSON.stringify({ ...deliveryInventory, routes: deliverableRoutes }));
+  await expectCode("capture-source.mjs", ["--url", url, "--routes", join(delivery, "routes-subset.json"), "--out", delivery, "--viewports", "desktop,mobile"], 0);
+  await expectCode("pixel-perfect-clone.mjs", ["export-design", "--source", delivery], 0);
+  await expectCode("verify-clone.mjs", ["--source", delivery, "--clone-url", url], 0);
+  const deliveryReport = await readJson(join(delivery, "verification", "fidelity-report.json"));
+  assert.equal(deliveryReport.machineGate, "pass");
+  assert.equal(deliveryReport.viewports.length, deliverableRoutes.length * 2);
+  assert.ok(deliveryReport.sections.length > 0);
+
+  // Incomplete review cannot reach VERIFIED.
+  const deliveryReview = join(delivery, "verification", "manual-review.json");
+  const pendingGates = Object.fromEntries(MANUAL_GATES.map((gate) => [gate, gate === "handoff validation" ? "pending" : "pass"]));
+  await writeFile(deliveryReview, JSON.stringify({ gates: pendingGates, gateReasons: {}, limitations: [] }));
+  await expectCode("finalize.mjs", ["--source", delivery], 2);
+  const awaiting = await readJson(join(delivery, "project-state.json"));
+  assert.equal(awaiting.status, "AWAITING_REVIEW");
+  assert.equal(awaiting.verdictStatus, "manual_review_required");
+  const firstHandoff = await run("pixel-perfect-clone.mjs", ["handoff", "--source", delivery]);
+  assert.equal(firstHandoff.code, 0, `${firstHandoff.stdout}\n${firstHandoff.stderr}`);
+  assert.match(await readFile(join(delivery, "handoff", "COMPLETION-REPORT.md"), "utf8"), /AWAITING_REVIEW/);
+
+  // Complete review reaches VERIFIED and the handoff reflects that verdict.
+  const completeGates = Object.fromEntries(MANUAL_GATES.map((gate) => [gate, "pass"]));
+  await writeFile(deliveryReview, JSON.stringify({ gates: completeGates, gateReasons: {}, limitations: [] }));
+  await expectCode("finalize.mjs", ["--source", delivery], 0);
+  const verified = await readJson(join(delivery, "project-state.json"));
+  assert.equal(verified.status, "VERIFIED");
+  assert.ok(verified.history.length >= 3);
+  assert.ok(verified.binding?.fingerprint);
+
+  // Repeated finalization is safe and idempotent.
+  await expectCode("finalize.mjs", ["--source", delivery], 0);
+  const repeated = await readJson(join(delivery, "project-state.json"));
+  assert.equal(repeated.status, "VERIFIED");
+  assert.equal(repeated.binding.fingerprint, verified.binding.fingerprint);
+
+  // Project state survives a new process.
+  const statusRun = await expectCode("pixel-perfect-clone.mjs", ["status", "--source", delivery], 0);
+  const statusJson = JSON.parse(statusRun.stdout);
+  assert.equal(statusJson.status, "VERIFIED");
+  assert.equal(statusJson.stale, false);
+
+  await expectCode("pixel-perfect-clone.mjs", ["handoff", "--source", delivery], 0);
+  const handoff = join(delivery, "handoff");
+  for (const name of ["START-HERE.md", "COMPLETION-REPORT.md", "REBUILD-GUIDE.md", "KNOWN-LIMITATIONS.md", "SITE-MAP.md", "PAGE-BLUEPRINTS.md", "INTERACTIONS.md", "DESIGN-GUIDE.md", "COMPONENTS.md", "RESPONSIVE-RULES.md", "tokens.json", "tokens.css", "index.html"]) {
+    assert.ok((await readFile(join(handoff, name), "utf8")).length > 0, `${name} is missing from the handoff package`);
+  }
+  assert.match(await readFile(join(handoff, "COMPLETION-REPORT.md"), "utf8"), /VERIFIED/);
+  assert.match(await readFile(join(handoff, "SITE-MAP.md"), "utf8"), /## Routes/);
+  const handoffManifest = await readJson(join(delivery, "evidence", "manifest.json"));
+  for (const viewport of handoffManifest.viewports) {
+    assert.ok((await readFile(join(handoff, "screenshots", "original", `${viewport.name}.png`))).length > 0, `${viewport.name} original screenshot missing`);
+    assert.ok((await readFile(join(handoff, "screenshots", "reconstructed", `${viewport.name}.png`))).length > 0, `${viewport.name} reconstructed screenshot missing`);
+    assert.ok((await readFile(join(handoff, "screenshots", "diff", `${viewport.name}.png`))).length > 0, `${viewport.name} diff screenshot missing`);
+  }
+
+  // The dashboard is opened and interacted with in a real browser.
+  const { chromium } = await import("playwright");
+  const dashboardBrowser = await chromium.launch({ headless: true });
+  try {
+    const dashboard = await dashboardBrowser.newPage();
+    const dashboardErrors = [];
+    dashboard.on("pageerror", (error) => dashboardErrors.push(String(error)));
+    const dashboardUrl = pathToFileURL(join(handoff, "index.html")).href;
+    await dashboard.goto(dashboardUrl, { waitUntil: "load" });
+    assert.ok(await dashboard.locator("h1").first().isVisible(), "dashboard heading is not visible");
+    const dashboardData = await dashboard.evaluate(() => JSON.parse(document.getElementById("dashboard-data").textContent));
+    assert.equal(dashboardData.status, "VERIFIED");
+    await dashboard.locator('[data-tab="screens"]').click();
+    assert.ok(await dashboard.locator('[data-panel="screens"]').isVisible(), "screens panel did not open");
+    assert.equal(await dashboard.locator('[data-panel="overview"]').isVisible(), false);
+    const viewNames = await dashboard.locator("[data-view-target]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-view-target")));
+    assert.ok(viewNames.length >= 2, "expected a viewport selector with multiple captures");
+    await dashboard.locator(`[data-view-target="${viewNames[1]}"]`).click();
+    assert.ok(await dashboard.locator(`[data-view-panel="${viewNames[1]}"]`).isVisible(), "selected view panel is hidden");
+    assert.equal(await dashboard.locator(`[data-view-panel="${viewNames[0]}"]`).isVisible(), false);
+    await dashboard.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await dashboard.waitForTimeout(250);
+    const images = await dashboard.evaluate(() => [...document.images].map((image) => ({ src: image.currentSrc || image.src, width: image.naturalWidth })));
+    assert.ok(images.length > 0, "dashboard rendered no screenshots");
+    assert.ok(images.every((image) => image.width > 0), `screenshots failed to load: ${images.filter((image) => !image.width).map((image) => image.src).join(", ")}`);
+    const references = await dashboard.evaluate(() => [...document.querySelectorAll("[href], [src]")].map((node) => node.getAttribute("href") ?? node.getAttribute("src")));
+    for (const reference of references) {
+      if (!reference || reference.startsWith("#") || /^https?:/i.test(reference)) continue;
+      const target = fileURLToPath(new URL(reference, dashboardUrl));
+      assert.ok(existsSync(target), `dashboard reference does not resolve: ${reference}`);
+    }
+    assert.equal(references.some((reference) => /^javascript:/i.test(reference ?? "")), false);
+    assert.deepEqual(dashboardErrors, []);
+  } finally {
+    await dashboardBrowser.close();
+  }
+
+  // Missing evidence can never reach VERIFIED, and the handoff reports that.
+  const negative = join(out, "negative-delivery");
+  await cp(delivery, negative, { recursive: true });
+  const negativeManifest = await readJson(join(negative, "evidence", "manifest.json"));
+  const doomed = negativeManifest.artifacts.find((artifact) => artifact.path.startsWith("source/screenshots/"));
+  assert.ok(doomed, "expected a checksummed screenshot artifact");
+  await rm(join(negative, doomed.path));
+  await expectCode("finalize.mjs", ["--source", negative], 1);
+  const blocked = await readJson(join(negative, "project-state.json"));
+  assert.equal(blocked.status, "BLOCKED");
+  await expectCode("pixel-perfect-clone.mjs", ["handoff", "--source", negative], 0);
+  const blockedStart = await readFile(join(negative, "handoff", "START-HERE.md"), "utf8");
+  assert.match(blockedStart, /BLOCKED/);
+  assert.doesNotMatch(blockedStart, /Delivery status: VERIFIED/);
+
+  console.log("fixture: capture, tokens, states, section crops, missing-clone failure, drift triage, clean pass, regression, offline triage, tamper detection, delivery workflow, dashboard, and blocked finalization all passed");
 } catch (error) {
   failed = true;
   throw error;
