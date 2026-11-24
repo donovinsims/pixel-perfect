@@ -1,0 +1,88 @@
+/*
+ * FindMy815 design tokens.
+ *
+ * The light palette is the measured one. The dark palette is NOT a copy of the
+ * reference site's: that palette measured 8.6:1 for body text but left surfaces,
+ * hairlines and placeholders nearly invisible against the page. These values are
+ * tuned for use instead, and tools/check-contrast.mjs verifies every pair that
+ * carries text or a control outline.
+ */
+:root {
+  color-scheme: light;
+  --font-text: "Geist", "Geist Placeholder", sans-serif;
+
+  --page: #fafafa;
+  --ink: #0f0f11;              /* headings, body emphasis */
+  --text: #49494f;             /* body copy, nav links      */
+  --muted: #67676e;            /* placeholders, meta        */
+  --fill: #ececef;             /* cards, fields, chips      */
+  --grey: #e3e3e6;             /* pressed/secondary fill    */
+  --line: #d2d2d6;             /* hairlines                 */
+  --control-border: #767681;   /* checkbox outlines         */
+  --accent: #ffd60a;
+  --accent-soft: #ffe44d;
+  --accent-ink: #0f0f11;
+  --header: rgba(250, 250, 250, 0.9);
+  --badge-bg: #ececef;
+  --ph: #dcdce0;               /* image placeholder fill    */
+  --ph-ink: #b9b9c0;
+
+  --radius-xs: 4px;
+  --radius-s: 6px;
+  --radius-m: 10px;
+  --radius-l: 12px;
+  --radius-pill: 999px;
+
+  --header-height: 67px;
+}
+
+/* Tuned dark palette: lifted surfaces, brighter text, visible controls. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #1c1c20;
+    --ink: #f8f8fa;
+    --text: #d2d2d9;
+    --muted: #a5a5ae;
+    --fill: #2b2b31;
+    --grey: #35353d;
+    --line: #46464f;
+    --control-border: #7e7e8a;
+    --header: rgba(28, 28, 32, 0.92);
+    --badge-bg: #3a3a43;
+    --ph: #31313a;
+    --ph-ink: #4d4d57;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #1c1c20;
+  --ink: #f8f8fa;
+  --text: #d2d2d9;
+  --muted: #a5a5ae;
+  --fill: #2b2b31;
+  --grey: #35353d;
+  --line: #46464f;
+  --control-border: #7e7e8a;
+  --header: rgba(28, 28, 32, 0.92);
+  --badge-bg: #3a3a43;
+  --ph: #31313a;
+  --ph-ink: #4d4d57;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --page: #fafafa;
+  --ink: #0f0f11;
+  --text: #49494f;
+  --muted: #67676e;
+  --fill: #ececef;
+  --grey: #e3e3e6;
+  --line: #d2d2d6;
+  --control-border: #767681;
+  --header: rgba(250, 250, 250, 0.9);
+  --badge-bg: #ececef;
+  --ph: #dcdce0;
+  --ph-ink: #b9b9c0;
+}

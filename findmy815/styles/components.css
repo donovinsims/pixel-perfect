@@ -1,0 +1,607 @@
+/*
+ * Shared chrome and components. Measurements are in the comments beside each
+ * value; they come from the layout trees dumped from the frozen capture.
+ */
+
+/* ---- Fonts (self-hosted, same files the source resolves) -------------- */
+@font-face {
+  font-family: "Geist";
+  src: url("../assets/fonts/geist-400-600.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Geist";
+  src: url("../assets/fonts/geist-400-600.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Geist";
+  src: url("../assets/fonts/geist-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Geist";
+  src: url("../assets/fonts/geist-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+
+/* ---- Header ----------------------------------------------------------- */
+/* nav 1440x67, pad 12px 20px, fixed; inner 1300x43 */
+.header-holder {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: var(--header-height);
+  z-index: 40;
+}
+
+.site-header {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  height: var(--header-height);
+  padding: 12px 20px;
+  background: var(--header);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.header-inner {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 1300px;
+  height: 43px;
+}
+
+.header-start {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-width: 0;
+}
+
+.header-end {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 32px;
+}
+
+.nav-cluster {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 32px;
+}
+
+/* links: 18px/23px, gap 28, colour rgb(73,73,79) */
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+
+.nav-links a {
+  font-size: 18px;
+  line-height: 23px;
+  color: var(--text);
+  transition: color 0.15s ease;
+}
+
+.nav-links a:hover { color: var(--ink); }
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+}
+
+/* The app icon is shown at its own aspect ratio and is deliberately not
+ * clipped into a circle. */
+.brand-logo {
+  flex: 0 0 auto;
+  display: block;
+  height: 30px;
+  width: auto;
+  border-radius: 0;
+  object-fit: contain;
+}
+
+.brand-name {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-pill);
+  background: var(--fill);
+  color: var(--ink);
+  transition: background 0.15s ease;
+}
+
+.theme-toggle:hover { background: var(--grey); }
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.search-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 43px;
+  border-radius: var(--radius-m);
+  color: var(--ink);
+}
+
+.search-btn:hover { background: var(--fill); }
+
+/* Submit 118x43, radius 6, accent */
+.submit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 118px;
+  height: 43px;
+  padding: 8px 16px 8px 14px;
+  border-radius: var(--radius-s);
+  background: var(--accent);
+  color: #0f0f11;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.submit-btn:hover { background: var(--accent-soft); }
+
+.menu-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-pill);
+  background: var(--fill);
+  color: var(--ink);
+}
+
+/* ---- Footer ----------------------------------------------------------- */
+/* footer 1300x431, pad 40px 0, inner 1300x351 pad 0 20px */
+.footer-holder {
+  width: 100%;
+  max-width: 1300px;
+}
+
+.site-footer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  padding: 40px 0;
+  background: var(--page);
+}
+
+.footer-inner {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 0 20px;
+}
+
+.footer-brand-col {
+  flex: 0 0 315px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.footer-links-col {
+  flex: 0 0 935px;
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+}
+
+.footer-col {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.footer-title {
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 27px;
+  color: var(--ink);
+}
+
+.footer-col a {
+  display: block;
+  font-size: 16px;
+  line-height: 16px;
+  color: var(--text);
+}
+
+.footer-col a:hover { color: var(--ink); }
+
+.footer-links {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.footer-social {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.footer-social a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--text);
+}
+
+.footer-social a:hover { color: var(--ink); }
+
+/* ---- Media placeholders ---------------------------------------------- */
+/*
+ * Photography is deliberately replaced by a neutral block of the source's
+ * measured aspect ratio, radius and position. Recorded as a limitation.
+ */
+.media {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  border-radius: var(--radius-s);
+  background: var(--ph);
+  overflow: hidden;
+}
+
+.media--featured { aspect-ratio: 3 / 2; }
+.media--wide { aspect-ratio: 3 / 2; }
+
+/* ---- Listing card ---------------------------------------------------- */
+/* card 417x343: image 417x278 + 16 gap + text row 417x49 */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.card-media {
+  position: relative;
+  border-radius: var(--radius-s);
+  overflow: hidden;
+}
+
+/* badge 53x28 at top 10 / right 10, pad 6px 10px, radius 6 */
+.card-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  padding: 6px 10px;
+  border-radius: var(--radius-s);
+  background: var(--badge-bg);
+}
+
+.card-badge span {
+  font-size: 16px;
+  line-height: 16px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.card-text {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+}
+
+.card-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.card-title {
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 27px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.card-sub {
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 16px;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.card-arrow {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  color: var(--text);
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.card:hover .card-arrow {
+  color: var(--ink);
+  transform: translate(2px, -2px);
+}
+
+/* ---- Explore card ---------------------------------------------------- */
+/* 420x116, pad 40px 24px, radius 6 */
+.explore-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  height: 116px;
+  padding: 40px 24px;
+  border-radius: var(--radius-s);
+  background: var(--fill);
+}
+
+.explore-card span {
+  font-size: 18px;
+  line-height: 27px;
+  color: var(--ink);
+}
+
+/* circle 36x36 */
+.explore-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  color: var(--ink);
+  transition: background 0.15s ease;
+}
+
+.explore-card:hover .explore-arrow { background: var(--grey); }
+
+/* ---- Forms ----------------------------------------------------------- */
+.field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 46px;
+  padding: 12px;
+  border-radius: var(--radius-s);
+  background: var(--fill);
+}
+
+.field input {
+  width: 100%;
+  font-size: 16px;
+  line-height: 16px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.field input::placeholder { color: var(--muted); }
+
+.field--tight { height: 43px; }
+
+.subscribe {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 46px;
+  padding: 0 15px;
+  border-radius: var(--radius-s);
+  background: var(--accent);
+  color: #0f0f11;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.subscribe:hover { background: var(--accent-soft); }
+
+.inline-form {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ---- Newsletter card ------------------------------------------------- */
+.newsletter-card {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 24px;
+  width: 100%;
+  padding: 24px;
+  border-radius: var(--radius-s);
+  background: var(--fill);
+}
+
+.newsletter-media {
+  flex: 0 0 438px;
+  width: 438px;
+  border-radius: var(--radius-s);
+  overflow: hidden;
+}
+
+.newsletter-body {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.newsletter-form-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+  width: 400px;
+  max-width: 100%;
+}
+
+.newsletter-form-block .inline-form { width: 100%; }
+.newsletter-form-block .inline-form input {
+  flex: 1 1 auto;
+  width: 100%;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.newsletter-form-block .inline-form .subscribe {
+  flex: 0 0 101px;
+  width: 101px;
+  height: 48px;
+}
+
+.newsletter-card .field { height: 48px; }
+
+/* ---- FAQ ------------------------------------------------------------- */
+/* row 800x75: pad 24, radius 6, fill; question 18px/27px */
+.faq-row {
+  width: 100%;
+  border-radius: var(--radius-s);
+  background: var(--fill);
+}
+
+.faq-question {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  width: 100%;
+  padding: 24px;
+  text-align: left;
+}
+
+.faq-question p {
+  flex: 1 1 auto;
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 27px;
+  color: var(--text);
+}
+
+.faq-icon {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  color: var(--ink);
+  transition: transform 0.2s ease;
+}
+
+.faq-row[open] .faq-icon { transform: rotate(45deg); }
+
+.faq-answer {
+  padding: 0 24px 24px;
+  font-size: 18px;
+  line-height: 27px;
+  color: var(--text);
+}
+
+/* ---- Chips ----------------------------------------------------------- */
+/* chip 39 tall, pad 6px 14px, radius 24 (pill) */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 39px;
+  padding: 6px 14px;
+  border-radius: var(--radius-s);
+  background: var(--fill);
+  font-size: 18px;
+  line-height: 27px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.chip--pill {
+  border-radius: 24px;
+  background: var(--page);
+  border: 1px solid var(--line);
+}
+
+/* ---- Buttons --------------------------------------------------------- */
+.load-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100px;
+  height: 40px;
+  border-radius: var(--radius-s);
+  background: var(--grey);
+  font-size: 16px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.load-more:hover { background: var(--line); }
+
+/* ---- States ---------------------------------------------------------- */
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* Inline icon sizing. Without explicit dimensions an SVG is a 300x150 flex item
+ * and shrinks to nothing, which moved the measured CTA width by 24px. */
+.cta-yellow svg,
+.map-pill svg { flex: 0 0 24px; width: 24px; height: 24px; }
+.explore-arrow svg { flex: 0 0 18px; width: 18px; height: 18px; }
+.footer-social svg { width: 18px; height: 18px; }
+
+/* ---- Theme toggle icon ----------------------------------------------- */
+/* A sun while the dark palette is active, a moon while the light one is. */
+.theme-icon-sun { display: none; }
+
+:root[data-theme="dark"] .theme-icon-sun { display: block; }
+:root[data-theme="dark"] .theme-icon-moon { display: none; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme-icon-sun { display: block; }
+  :root:not([data-theme="light"]) .theme-icon-moon { display: none; }
+}
+
