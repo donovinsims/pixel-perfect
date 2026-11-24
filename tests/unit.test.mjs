@@ -818,6 +818,12 @@ test("capture profiles are deterministic and validate browser context options", 
   assert.throws(() => captureProfileFrom({ resourceTimeoutMs: 30_001 }), /resourceTimeoutMs/);
   assert.throws(() => captureProfileFrom({ waitForImages: "false" }), /waitForImages.*boolean/);
   assert.throws(() => captureProfileFrom({ accessToken: "secret" }), /Unsupported capture profile field/);
+  // Reveal-on-scroll is opt-in: a capture that skips the scroll pass must stay
+  // the default so existing profiles keep measuring the same pixels.
+  assert.equal(captureProfileFrom({}).revealScroll, false);
+  assert.equal(captureProfileFrom({ revealScroll: true }).revealScroll, true);
+  assert.equal(captureProfileFromManifest({ ...DEFAULT_CAPTURE_PROFILE, revealScroll: true, browserVersion: "Chromium 123" }).revealScroll, true);
+  assert.throws(() => captureProfileFrom({ revealScroll: "yes" }), /revealScroll.*boolean/);
 });
 
 test("design-system export includes measured headings, layouts, components, docs, and CSS", () => {

@@ -3,3 +3,10 @@ work/
 *.log
 .DS_Store
 .tmp-*/
+
+# Captured evidence bundles are never committed (AGENTS.md §11).
+.clone/
+.clone-dark/
+
+# Editor/app metadata for this chat's project, not part of the code.
+.freebuff/

@@ -43,6 +43,27 @@ const server = createServer((request, response) => {
   if (requestUrl.searchParams.has("textdrift")) {
     body = body.replace("Measured CTA card", "Changed measured CTA card").replace('id="one"', 'id="uno"');
   }
+  // A framework-style page frame: main holds exactly one wrapper, so region
+  // detection has to descend into it instead of reporting the wrapper.
+  if (requestUrl.pathname === "/wrapper") {
+    body = body.replace(/<body>[\s\S]*<\/body>/, [
+      "<body>",
+      '<div id="app"><main id="content"><div class="page-frame">',
+      '<section class="card" id="one"><h1>Wrapper hero</h1><p>Every block sits inside one page frame.</p><button class="cta">Start now</button></section>',
+      '<section class="pricing" id="two"><h2>Wrapper pricing</h2><p>Descended into its own region.</p><div class="tile"></div><div class="tile"></div></section>',
+      "</div></main></div>",
+      "</body>",
+    ].join(""));
+  }
+  // Content held at opacity 0 until the document scrolls, below the fold.
+  if (requestUrl.pathname === "/reveal") {
+    body = body.replace("</main>", [
+      '<section id="reveal-panel" style="opacity:0;margin-top:1400px;min-height:300px">',
+      "<h2>Deferred reveal panel</h2><p>Visible only after a scroll pass.</p></section>",
+      "<script>addEventListener('scroll',function(){if(window.scrollY>100)document.getElementById('reveal-panel').style.opacity='1'},{passive:true})</script>",
+      "</main>",
+    ].join(""));
+  }
   if (requestUrl.pathname === "/") {
     body = body.replace("</body>", '<nav id="discovery-links"><a href="/about/">About</a><a href="/missing">Missing</a><a href="/private">Private</a><a href="https://example.invalid/out">External</a></nav></body>');
   }
@@ -121,6 +142,38 @@ try {
     "measured-footer-content",
   ]);
   for (const section of desktopSections.sections) assert.ok(section.bytes > 0, `${section.slug} was not cropped`);
+
+  // 1b. A framework-style page frame is descended into instead of being
+  // reported as one region spanning the whole document.
+  const wrapperOut = join(out, "wrapper-source");
+  await expectCode("capture-source.mjs", ["--url", `${url}/wrapper`, "--out", wrapperOut, "--viewports", "desktop"], 0);
+  const wrapperSections = await readJson(join(wrapperOut, "evidence", "sections-desktop.json"));
+  assert.equal(wrapperSections.sections.length, 2);
+  assert.deepEqual(wrapperSections.sections.map((section) => section.slug), ["wrapper-hero", "wrapper-pricing"]);
+  const wrapperObservation = await readJson(join(wrapperOut, "evidence", "observation-desktop.json"));
+  assert.deepEqual(wrapperObservation.sections.map((section) => section.tag), ["section", "section"]);
+  assert.equal(wrapperObservation.sections[0].heading, "Wrapper hero");
+  // Stacked blocks, not one wrapper box: the second region starts below the first.
+  assert.ok(wrapperObservation.sections[1].documentRect.y >= wrapperObservation.sections[0].documentRect.y + wrapperObservation.sections[0].documentRect.height);
+
+  // 1c. Reveal-on-scroll is an explicit profile key. Without it the deferred
+  // panel is still at opacity 0; with it the same panel measures revealed.
+  const revealPlainOut = join(out, "reveal-plain");
+  await expectCode("capture-source.mjs", ["--url", `${url}/reveal`, "--out", revealPlainOut, "--viewports", "desktop"], 0);
+  const revealPlain = await readJson(join(revealPlainOut, "evidence", "observation-desktop.json"));
+  const plainPanel = revealPlain.sections.find((section) => section.id === "reveal-panel");
+  assert.ok(plainPanel, "the deferred panel was not detected as a region");
+  assert.equal(plainPanel.style.opacity, "0");
+  const revealProfilePath = join(out, "reveal-profile.json");
+  await writeFile(revealProfilePath, JSON.stringify({ revealScroll: true }));
+  const revealScrolledOut = join(out, "reveal-scrolled");
+  await expectCode("capture-source.mjs", ["--url", `${url}/reveal`, "--out", revealScrolledOut, "--viewports", "desktop", "--profile", revealProfilePath], 0);
+  const revealScrolled = await readJson(join(revealScrolledOut, "evidence", "observation-desktop.json"));
+  const scrolledPanel = revealScrolled.sections.find((section) => section.id === "reveal-panel");
+  assert.ok(scrolledPanel, "the deferred panel was not detected as a region");
+  assert.equal(scrolledPanel.style.opacity, "1");
+  const revealManifest = await readJson(join(revealScrolledOut, "evidence", "manifest.json"));
+  assert.equal(revealManifest.captureProfile.revealScroll, true);
 
   // 2. Discover routes conservatively from sitemap and same-origin navigation.
   const discoveryOut = join(out, "discovery-run");
